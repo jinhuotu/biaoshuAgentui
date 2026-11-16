@@ -22,8 +22,8 @@ function directory(name, batches) {
 }
 const transfer = entries => ({ files: [], items: entries.map(entry => ({ kind: 'file', webkitGetAsEntry: () => entry })) })
 
-test('single ZIP and DOCX uploads keep their original files', async () => {
-  for (const name of ['招标文件.ZIP', '邀请书.docx']) {
+test('single ZIP, RAR and DOCX uploads keep their original files', async () => {
+  for (const name of ['招标文件.ZIP', '招标文件.rar', '邀请书.docx']) {
     const file = new File(['source'], name)
     assert.equal(await prepareSelectedBidUpload([file]), file)
   }
@@ -83,6 +83,6 @@ test('size limit is enforced before reading large files', async () => {
 })
 
 test('unsupported individual files identify the rejected filename', async () => {
-  await assert.rejects(prepareSelectedBidUpload([new File(['x'], '招标文件.rar')]), /招标文件\.rar.*ZIP|招标文件\.rar.*zip/)
+  await assert.rejects(prepareSelectedBidUpload([new File(['x'], '招标文件.7z')]), /招标文件\.7z.*\.zip \/ \.rar/)
   await assert.rejects(prepareSelectedBidUpload([new File(['x'], '邀请书.doc')]), /邀请书\.doc.*docx/)
 })

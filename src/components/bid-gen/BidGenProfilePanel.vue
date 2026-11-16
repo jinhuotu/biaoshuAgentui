@@ -13,6 +13,7 @@ import {
   type CertificateStatus,
   type CompanyProfile,
   type LibraryMatch,
+  type LibrarySuggestion,
 } from '@/lib/bid-gen-api'
 
 const props = defineProps<{ taskId: string; bidDeadline: string; validityEnd: string }>()
@@ -163,6 +164,18 @@ function fieldSource(section: string, key: string): string {
   return (libraryMatch.value?.sources[`${section}.${key}`] ?? []).map((source) => source.name || source.title).join('、')
 }
 
+/** 资料库识别出、但与当前填写值不同的候选值（含企业主体不一致的资料） */
+function suggestionsFor(section: string, key: string): LibrarySuggestion[] {
+  const current = String((profile.value as any)?.[section]?.[key] ?? '').trim()
+  return (libraryMatch.value?.suggestions?.[`${section}.${key}`] ?? []).filter((item) => item.value !== current)
+}
+
+function adoptSuggestion(section: string, key: string, value: string) {
+  if (!profile.value) return
+  ;(profile.value as any)[section][key] = value
+  message.value = '已采用资料库识别值，保存后生效'
+}
+
 async function load() {
   loading.value = true
   errorMessage.value = ''
@@ -172,10 +185,8 @@ async function load() {
     libraryMatch.value = data.libraryMatch
     categories.value = data.certificateCategories
     await runCheck()
-    return true
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : String(error)
-    return false
   } finally {
     loading.value = false
   }
@@ -268,7 +279,7 @@ async function onScanSelected(certificate: Certificate, event: Event) {
   }
 }
 
-defineExpose({ save, load })
+defineExpose({ save })
 onMounted(load)
 </script>
 
@@ -335,6 +346,7 @@ onMounted(load)
             <span class="mb-1 flex flex-wrap items-center gap-x-2 text-muted-foreground">
               {{ field.label }}
               <span v-if="fieldSource('company', field.key)" class="text-[10px] text-emerald-600" :title="fieldSource('company', field.key)">已从资料库匹配</span>
+              <span v-else-if="!profile.company[field.key] && suggestionsFor('company', field.key).length" class="text-[10px] text-sky-600">资料库有识别结果</span>
               <span v-else-if="!profile.company[field.key]" class="text-[10px] text-amber-600">待补充</span>
             </span>
             <textarea
@@ -350,6 +362,15 @@ onMounted(load)
               :placeholder="field.placeholder || '资料库未匹配到时，请手动填写'"
               class="w-full rounded-md border border-border bg-background px-2.5 py-1.5 focus:border-primary focus:outline-none"
             >
+            <span
+              v-for="item in suggestionsFor('company', field.key)"
+              :key="item.documentId + item.value"
+              class="mt-1 flex flex-wrap items-center gap-x-1.5 text-[11px] text-sky-700"
+            >
+              <span>资料库识别：{{ item.value }}</span>
+              <span class="text-muted-foreground">（{{ item.title || item.name }}<template v-if="item.owner">；资料主体为“{{ item.owner }}”，与投标人不一致</template>）</span>
+              <button type="button" class="rounded border border-sky-300 px-1.5 leading-5 hover:bg-sky-50" @click.prevent="adoptSuggestion('company', field.key, item.value)">采用</button>
+            </span>
           </label>
         </div>
         <div class="grid grid-cols-1 gap-3 lg:grid-cols-3">
@@ -370,6 +391,15 @@ onMounted(load)
                 placeholder="未匹配到时手动填写"
                 class="w-full rounded-md border border-border bg-background px-2.5 py-1.5 focus:border-primary focus:outline-none"
               >
+              <span
+                v-for="item in suggestionsFor(person.key, field.key)"
+                :key="item.documentId + item.value"
+                class="mt-1 flex flex-wrap items-center gap-x-1.5 text-[11px] text-sky-700"
+              >
+                <span>资料库识别：{{ item.value }}</span>
+                <span class="text-muted-foreground">（{{ item.title || item.name }}<template v-if="item.owner">；主体不一致</template>）</span>
+                <button type="button" class="rounded border border-sky-300 px-1.5 leading-5 hover:bg-sky-50" @click.prevent="adoptSuggestion(person.key, field.key, item.value)">采用</button>
+              </span>
             </label>
             <label v-if="person.idNumber" class="block text-[12px]">
               <span class="mb-1 block text-muted-foreground">身份证号</span>
@@ -378,6 +408,15 @@ onMounted(load)
                 placeholder="未匹配到时手动填写"
                 class="w-full rounded-md border border-border bg-background px-2.5 py-1.5 focus:border-primary focus:outline-none"
               >
+              <span
+                v-for="item in suggestionsFor(person.key, 'idNumber')"
+                :key="item.documentId + item.value"
+                class="mt-1 flex flex-wrap items-center gap-x-1.5 text-[11px] text-sky-700"
+              >
+                <span>资料库识别：{{ item.value }}</span>
+                <span class="text-muted-foreground">（{{ item.title || item.name }}<template v-if="item.owner">；主体不一致</template>）</span>
+                <button type="button" class="rounded border border-sky-300 px-1.5 leading-5 hover:bg-sky-50" @click.prevent="adoptSuggestion(person.key, 'idNumber', item.value)">采用</button>
+              </span>
             </label>
           </fieldset>
         </div>

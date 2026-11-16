@@ -3,7 +3,7 @@ import JSZip from 'jszip/dist/jszip.min.js'
 export const BID_UPLOAD_MAX_BYTES = 200 * 1024 * 1024
 const MAX_FILES = 3000
 const MAX_DIRECTORY_DEPTH = 32
-const SUPPORTED_FILE = /\.(zip|docx)$/i
+const SUPPORTED_FILE = /\.(zip|rar|docx|pdf)$/i
 
 type UploadSource = { file: File; path: string }
 
@@ -39,7 +39,7 @@ function sourceCollector() {
 async function packageSources(sources: UploadSource[]): Promise<File> {
   if (!sources.length) throw new Error('文件夹中没有可上传文件，请选择包含招标文件的文件夹')
   if (!sources.some(source => SUPPORTED_FILE.test(source.file.name))) {
-    throw new Error(`“${sources[0]!.path}”无法作为招标文件解析，请上传 ZIP 压缩包（.zip）或 Word 文件（.docx）；旧版 Word 请另存为 .docx`)
+    throw new Error(`“${sources[0]!.path}”无法作为招标文件解析，请上传压缩包（.zip / .rar）、Word 文件（.docx）或 PDF 文件；旧版 Word 请另存为 .docx`)
   }
   const only = sources.length === 1 ? sources[0] : undefined
   if (only && only.path === only.file.name) {
@@ -50,7 +50,7 @@ async function packageSources(sources: UploadSource[]): Promise<File> {
   for (const source of sources) {
     archive.file(source.path, await source.file.arrayBuffer(), { createFolders: false })
   }
-  // 原件可能已是 ZIP / DOCX；只封装一次，内层压缩包由后端按既有规则递归解析。
+  // 原件可能已是 ZIP / RAR / DOCX；只封装一次，内层压缩包由后端按既有规则递归解析。
   const bytes = await archive.generateAsync({ type: 'uint8array', compression: 'STORE' })
   if (bytes.byteLength > BID_UPLOAD_MAX_BYTES) throw new Error('打包后文件超过 200MB，请拆分后上传')
   const folder = sources[0]!.path.split('/')[0]!

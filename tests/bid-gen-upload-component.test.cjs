@@ -63,9 +63,9 @@ const component = moduleFrom(compiled, filename, {
   assert.equal(input.value, '')
   assert.equal(uploads.length, 2)
   assert.equal(Object.keys((await JSZip.loadAsync(await uploads[1].arrayBuffer())).files).length, 2)
-  await api.onDrop({ dataTransfer: { items: [], files: [new File(['x'], 'unsupported.rar')] } })
+  await api.onDrop({ dataTransfer: { items: [], files: [new File(['x'], 'unsupported.7z')] } })
   assert.equal(uploads.length, 2)
-  assert.match(api.errorMessage.value, /unsupported.rar/)
+  assert.match(api.errorMessage.value, /unsupported.7z/)
   assert.equal(api.busy.value, '')
   api.busy.value = 'upload'
   await api.onFileSelected({ target: { value: '', files: [new File(['x'], 'another.zip')] } })
