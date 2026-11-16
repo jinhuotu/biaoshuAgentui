@@ -12,6 +12,10 @@ dist
 dist-ssr
 *.local
 
+# 本地临时产物（后端 pytest 在前端目录跑过时会留下 .pytest-* 目录）
+tmp/
+.pytest-*/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
