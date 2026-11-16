@@ -194,7 +194,7 @@ export const NAV_ITEM_DESC: Record<string, string> = {
   '/tender-tasks': '全量投标任务筛选与导出',
   '/approval': '待审、已审与我发起的申请',
   '/knowledge': '文档入库、检索与预览',
-  '/tenders': '邀请书识别与文档生成',
+  '/tenders': '上传招标压缩包，本地算法生成并自查',
   '/tender-package': '压缩包全流程高级操作',
   '/tender-qa': '对照邀请书给生成稿或终稿打分',
   [QUOTE_NAV_HREF]: '造价、报价与控制预算一站生成',

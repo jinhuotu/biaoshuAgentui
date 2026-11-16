@@ -14,7 +14,12 @@ declare module 'jszip/dist/jszip.min.js' {
     _data: { uncompressedSize: number; crc32: number }
     internalStream(type: 'uint8array'): Stream
   }
+  interface JSZipArchive {
+    file(path: string, bytes: ArrayBuffer, options: { createFolders: boolean }): JSZipArchive
+    generateAsync(options: { type: 'uint8array'; compression: 'STORE' }): Promise<Uint8Array<ArrayBuffer>>
+  }
   const JSZip: {
+    new (): JSZipArchive
     loadAsync(bytes: Uint8Array, options: { decodeFileName: (bytes: Uint8Array) => string; checkCRC32: boolean; createFolders: boolean }): Promise<{ files: Record<string, JSZipObject> }>
   }
   export default JSZip

@@ -24,7 +24,7 @@ const MIGRATED_VIEWS: Record<string, () => Promise<{ default: Component }>> = {
   '/prompt-manage': () => import('@/views/PromptManageView.vue'),
   '/mcp-manage': () => import('@/views/McpManageView.vue'),
   '/knowledge': () => import('@/views/KnowledgeListView.vue'),
-  '/tenders': () => import('@/views/TendersView.vue'),
+  '/tenders': () => import('@/views/BidGenView.vue'),
   '/tender-package-wizard': () => import('@/views/TenderPackageWizard.vue'),
   '/tender-package': () => import('@/views/TenderPackageView.vue'),
   '/tender-qa': () => import('@/views/TenderQaView.vue'),
@@ -78,6 +78,13 @@ function buildFeatureRoutes(): RouteRecordRaw[] {
   }
 
   routes.push(
+    {
+      // 旧版（模型生成）标书页，保留入口便于对照
+      path: 'tenders-classic',
+      name: 'tenders-classic',
+      component: () => import('@/views/TendersView.vue'),
+      meta: { title: 'AI标书生成（旧版）' },
+    },
     {
       path: 'knowledge/:baseId',
       name: 'knowledge-detail',
