@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ArrowLeft, ArrowRight, Check, FileArchive, FolderOpen, History, RefreshCw, Sparkles, Trash2, UploadCloud } from 'lucide-vue-next'
 import { PageHeader, Panel } from '@/components/ui-kit'
+import BidGenCorpusPanel from '@/components/bid-gen/BidGenCorpusPanel.vue'
 import BidGenProfilePanel from '@/components/bid-gen/BidGenProfilePanel.vue'
 import BidGenResultPanel from '@/components/bid-gen/BidGenResultPanel.vue'
 import BidGenTenderPanel from '@/components/bid-gen/BidGenTenderPanel.vue'
@@ -45,10 +46,7 @@ const uploadMessage = ref('')
 
 const maxStep = computed(() => (!task.value ? 0 : task.value.result ? 3 : 2))
 const certificateIssues = computed(() =>
-  certificateCheck.value ? ['expired', 'expiring', 'insufficient', 'unknown'].reduce(
-    (count, status) => count + (certificateCheck.value!.summary[status as keyof CertificateCheck['summary']] || 0),
-    certificateCheck.value.missing.length,
-  ) : 0,
+  certificateCheck.value ? certificateCheck.value.summary.expired + certificateCheck.value.missing.length : 0,
 )
 
 function describeError(error: unknown) {
@@ -56,7 +54,6 @@ function describeError(error: unknown) {
 }
 
 function applyTask(next: BidTask, step: number) {
-  if (next.id !== task.value?.id) certificateCheck.value = null
   task.value = next
   lotCodes.value = [...next.selection.lotCodes]
   packageNo.value = next.selection.packageNo
@@ -126,7 +123,6 @@ async function removeTask(id: string) {
 
 function startOver() {
   task.value = null
-  certificateCheck.value = null
   stepIndex.value = 0
   errorMessage.value = ''
   void router.replace({ path: route.path })
@@ -151,10 +147,6 @@ async function generate() {
       includeScoreIndex: true,
     })
     applyTask(next, 3)
-    // 后端生成前会同步资料库，刷新表单，避免下次保存把旧值写回。
-    if (profilePanel.value && !(await profilePanel.value.load())) {
-      errorMessage.value = '标书已生成，但最新企业资料加载失败，请刷新页面后再编辑或重新生成。'
-    }
     await refreshTasks()
   } catch (error) {
     errorMessage.value = describeError(error)
@@ -243,7 +235,7 @@ onMounted(async () => {
           <FileArchive class="size-10 text-primary" />
           <p class="mt-3 text-[14px] font-medium">把招标文件、文件夹或压缩包拖到这里</p>
           <p class="mt-1 text-[12px] text-muted-foreground">
-            支持 .zip、.docx，可一次选择多个文件；文件夹自动打包并保留目录层级，总大小不超过 200MB
+            支持 .zip、.rar、.docx、.pdf，可一次选择多个文件；文件夹自动打包并保留目录层级，总大小不超过 200MB
           </p>
           <button
             type="button"
@@ -256,7 +248,7 @@ onMounted(async () => {
           <button type="button" class="mt-2 inline-flex items-center gap-1.5 rounded-md border border-border px-4 py-2 text-[13px] disabled:opacity-50" :disabled="!!busy" @click="folderInput?.click()">
             <FolderOpen class="size-4" />选择文件夹
           </button>
-          <input ref="fileInput" type="file" accept=".zip,.docx" multiple class="hidden" @change="onFileSelected">
+          <input ref="fileInput" type="file" accept=".zip,.rar,.docx,.pdf" multiple class="hidden" @change="onFileSelected">
           <input ref="folderInput" type="file" webkitdirectory multiple class="hidden" @change="onFileSelected">
         </div>
         <ul class="mt-4 grid grid-cols-1 gap-2 text-[12px] text-muted-foreground md:grid-cols-2">
@@ -289,6 +281,9 @@ onMounted(async () => {
           <li v-if="!tasks.length" class="py-6 text-center text-[12px] text-muted-foreground">还没有生成记录</li>
         </ul>
       </Panel>
+      <Panel title="历史标书库" subtitle="导入公司往期投标文件，生成时按评分点复用同类章节（自动替换为本项目名称）。">
+        <BidGenCorpusPanel />
+      </Panel>
     </div>
 
     <!-- 2 解析确认 -->
@@ -299,7 +294,6 @@ onMounted(async () => {
     <!-- 3 企业资料 -->
     <Panel v-if="task" v-show="stepIndex === 2" title="投标人企业资料与证件库" subtitle="根据投标资料库中的已有数据自动匹配；未匹配到的内容再手动补充，生成标书时使用当前资料。">
       <BidGenProfilePanel
-        :key="task.id"
         ref="profilePanel"
         :task-id="task.id"
         :bid-deadline="task.tender.bidDeadline"
@@ -319,7 +313,7 @@ onMounted(async () => {
         <ArrowLeft class="size-3.5" />上一步
       </button>
       <span v-if="certificateIssues && stepIndex >= 2" class="text-[12px] text-red-600">
-        当前企业证件有 {{ certificateIssues }} 项效期风险或缺失（含临期、有效期不足及未登记），请核对。
+        证件库有 {{ certificateIssues }} 项过期或缺失，建议先处理；仍可继续生成。
       </span>
       <span class="flex-1" />
       <button

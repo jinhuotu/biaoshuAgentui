@@ -3,11 +3,8 @@ import { computed, nextTick, ref, watch } from 'vue'
 import { renderAsync } from 'docx-preview'
 import { AlertTriangle, CheckCircle2, CircleDashed, Download, FileText, ShieldCheck } from 'lucide-vue-next'
 import BidGenOutlineTree from './BidGenOutlineTree.vue'
-import BidGenExpiryPanel from './BidGenExpiryPanel.vue'
-import { combinedEstimatedScore, fileScoreLines, hasScoreCriteria, overallScoreLine, scoreValue } from '@/lib/bid-gen-score'
 import {
   downloadBidFile,
-  downloadBidScoreCheck,
   fetchBidFileBlob,
   type BidTask,
   type CertificateStatus,
@@ -18,6 +15,7 @@ import {
 const props = defineProps<{ task: BidTask }>()
 
 const TABS = [
+  { key: 'risk', label: '风险自查与分析' },
   { key: 'score', label: '评分标准自查' },
   { key: 'outline', label: '目录层级' },
   { key: 'preview', label: 'Word 预览' },
@@ -48,19 +46,17 @@ const SCORE_FILTERS: { key: ScoreStatus | 'all'; label: string }[] = [
   { key: 'external', label: '招标人评定' },
 ]
 
-const activeTab = ref<(typeof TABS)[number]['key']>('score')
+const activeTab = ref<(typeof TABS)[number]['key']>('risk')
 const scoreFilter = ref<ScoreStatus | 'all'>('all')
 const previewFile = ref('')
 const previewHost = ref<HTMLElement | null>(null)
 const previewState = ref<'idle' | 'loading' | 'ready' | 'error'>('idle')
 const previewError = ref('')
 const downloading = ref('')
-const scoreExporting = ref(false)
 const errorMessage = ref('')
 let previewToken = 0
 
 const result = computed(() => props.task.result!)
-const hasCriteria = computed(() => hasScoreCriteria(result.value.scoreCheck))
 const wordFiles = computed(() => result.value.files.filter((file) => file.name.endsWith('.docx')))
 const scoreItems = computed<ScoreCheckItem[]>(() =>
   result.value.scoreCheck.items.filter((item) => scoreFilter.value === 'all' || item.status === scoreFilter.value),
@@ -68,8 +64,7 @@ const scoreItems = computed<ScoreCheckItem[]>(() =>
 const scoreGroups = computed(() => {
   const groups: { title: string; items: ScoreCheckItem[] }[] = []
   for (const item of scoreItems.value) {
-    const label = item.volume === 'price' ? '报价评分' : item.volume === 'business' ? '商务 / 其他评分' : `技术评分${item.category ? `（${item.category}）` : ''}`
-    const title = `${label} · ${item.group}`
+    const title = `${item.volume === 'business' ? '商务评分' : `技术评分${item.category ? `（${item.category}）` : ''}`} · ${item.group}`
     const group = groups.find((entry) => entry.title === title)
     if (group) group.items.push(item)
     else groups.push({ title, items: [item] })
@@ -90,7 +85,9 @@ function formatSize(bytes: number) {
 }
 
 function scoreRange(item: ScoreCheckItem) {
-  if (item.maxScore === null || item.minScore === null) return '—'
+  if (item.maxScore === null) return '—'
+  // 定额评分项（如“（6分）”）只有上限
+  if (item.minScore === null) return `${item.maxScore}`
   return `${item.minScore} ~ ${item.maxScore}`
 }
 
@@ -103,18 +100,6 @@ async function download(name: string) {
     errorMessage.value = error instanceof Error ? error.message : String(error)
   } finally {
     downloading.value = ''
-  }
-}
-
-async function exportScoreCheck() {
-  scoreExporting.value = true
-  errorMessage.value = ''
-  try {
-    await downloadBidScoreCheck(props.task.id)
-  } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : String(error)
-  } finally {
-    scoreExporting.value = false
   }
 }
 
@@ -160,7 +145,7 @@ watch(
 <template>
   <div class="space-y-4">
     <!-- 概览 -->
-    <div class="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-7">
+    <div class="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-6">
       <div class="rounded-lg border border-border bg-card p-3">
         <p class="text-[11px] text-muted-foreground">预计页数（完整版）</p>
         <p class="mt-1 text-xl font-semibold">约 {{ result.stats.estimatedPages }} <span class="text-[12px] font-normal">页</span></p>
@@ -179,12 +164,7 @@ watch(
       </div>
       <div class="rounded-lg border border-border bg-card p-3">
         <p class="text-[11px] text-muted-foreground">评分项响应覆盖率</p>
-        <p class="mt-1 text-xl font-semibold" :class="hasCriteria && result.scoreCheck.passed ? 'text-emerald-600' : 'text-amber-600'">{{ hasCriteria && result.scoreCheck.coverage != null ? `${result.scoreCheck.coverage}%` : '暂不可评' }}</p>
-      </div>
-      <div class="rounded-lg border border-border bg-card p-3">
-        <p class="text-[11px] text-muted-foreground">综合预估得分</p>
-        <p class="mt-1 text-xl font-semibold text-primary">{{ combinedEstimatedScore(result.scoreCheck) ?? '暂不可评' }}<span v-if="combinedEstimatedScore(result.scoreCheck) != null" class="text-[12px] font-normal"> 分</span></p>
-        <p class="mt-1 text-[10px] leading-relaxed text-muted-foreground">{{ overallScoreLine(result.scoreCheck) }}</p>
+        <p class="mt-1 text-xl font-semibold" :class="result.scoreCheck.passed ? 'text-emerald-600' : 'text-amber-600'">{{ result.scoreCheck.coverage }}%</p>
       </div>
       <div class="rounded-lg border border-border bg-card p-3">
         <p class="text-[11px] text-muted-foreground">待补充 / 需核对</p>
@@ -214,7 +194,6 @@ watch(
             <span class="block truncate text-[11px] text-muted-foreground">
               {{ formatSize(file.size) }}{{ file.estimatedPages ? ` · 约 ${file.estimatedPages} 页` : '' }}
             </span>
-            <span v-for="line in fileScoreLines(result.scoreCheck, file.key)" :key="line" class="mt-1 block text-[11px] text-muted-foreground">{{ line }}</span>
           </span>
         </button>
       </div>
@@ -239,15 +218,12 @@ watch(
 
     <!-- 评分自查 -->
     <div v-show="activeTab === 'score'" class="space-y-3">
-      <p v-if="!hasCriteria" role="alert" class="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-800">
-        未识别到适用的评分标准，暂不可评分。这不代表得分为零或自查通过。旧任务可先重新生成以读取最新评分规则；仍未识别时，请补充包含评分细则的 Word 招标文件后重新上传。
-      </p>
       <div class="grid grid-cols-1 gap-3 lg:grid-cols-2">
         <div v-for="volume in result.scoreCheck.volumes" :key="volume.volume" class="rounded-lg border border-border bg-card p-3 text-[12px]">
           <div class="flex items-center justify-between">
             <span class="font-medium">{{ volume.label }}（共 {{ volume.total }} 项）</span>
             <span>
-              <b class="text-[13px] leading-relaxed text-primary">{{ scoreValue(result.scoreCheck, volume) }}</b>
+              可量化项预估 <b class="text-[15px] text-primary">{{ volume.estimatedScore }}</b> / {{ volume.maxScore }} 分
             </span>
           </div>
           <div class="mt-2 flex h-2 overflow-hidden rounded-full bg-muted">
@@ -279,75 +255,39 @@ watch(
           {{ filter.label }}
         </button>
         <span class="ml-2 text-[11px] text-muted-foreground">
-          {{ result.scoreCheck.readBack ? '已读取生成的 Word 文件；识别评分条款不代表已经响应或得分' : '按章节结构核对' }}
+          {{ result.scoreCheck.readBack ? '已回读生成的 Word 文件，逐项确认响应章节真实存在' : '按章节结构核对' }}
         </span>
-        <button
-          type="button"
-          class="ml-auto inline-flex items-center gap-1.5 rounded-md border border-primary/40 bg-primary/5 px-2.5 py-1 text-[12px] text-primary hover:bg-primary/10 disabled:opacity-50"
-          :disabled="scoreExporting"
-          @click="exportScoreCheck"
-        >
-          <Download class="size-3.5" />
-          {{ scoreExporting ? '正在导出…' : '导出评分自查 Excel' }}
-        </button>
       </div>
-      <p class="text-[11px] text-muted-foreground">评分明细共五列，判定依据、改进建议与 Excel 对应；可拖动底部滚动条左右查看，上下滚动查看全部评分项。</p>
-      <div class="bid-score-scroll rounded-lg border border-border bg-card focus-visible:outline-2 focus-visible:outline-primary" role="region" aria-label="评分明细" tabindex="0">
-        <table class="bid-score-table text-[12px]">
-          <caption class="sr-only">评分项明细，包含评审细则、响应章节、判定依据和改进建议</caption>
-          <colgroup>
-            <col style="width: 13%">
-            <col style="width: 24%">
-            <col style="width: 18%">
-            <col style="width: 20%">
-            <col style="width: 25%">
-          </colgroup>
-          <thead class="sticky top-0 z-10 bg-muted">
-            <tr>
-              <th scope="col" class="font-medium">评分项 / 自查状态</th>
-              <th scope="col" class="font-medium">评审细则</th>
-              <th scope="col" class="font-medium">响应章节</th>
-              <th scope="col" class="font-medium">判定依据</th>
-              <th scope="col" class="font-medium">改进建议</th>
-            </tr>
-          </thead>
-          <tbody v-for="group in scoreGroups" :key="group.title">
-            <tr class="bg-muted/50">
-              <th colspan="5" scope="rowgroup" class="font-medium">{{ group.title }}</th>
-            </tr>
-            <tr v-for="item in group.items" :key="item.criterionId">
-              <td>
-                <p class="font-medium">{{ item.factor }}</p>
-                <p class="mt-0.5 text-[11px] text-muted-foreground">分值范围 {{ scoreRange(item) }}</p>
-                <span class="mt-1 inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[11px]" :class="SCORE_STYLE[item.status]">
-                  <CheckCircle2 v-if="item.status === 'full'" class="size-3" />
-                  <AlertTriangle v-else-if="item.status === 'missing' || item.status === 'partial'" class="size-3" />
-                  <CircleDashed v-else class="size-3" />
-                  {{ item.statusLabel }}
-                </span>
-                <p v-if="item.estimatedScore !== null && !item.deduction" class="mt-1 text-[11px]">
-                  预估得分 <b class="text-primary">{{ item.estimatedScore }}</b>
-                </p>
-              </td>
-              <td>
-                <p class="whitespace-pre-line leading-relaxed">{{ item.rule }}</p>
-              </td>
-              <td>
-                <p v-if="item.sections.length">{{ item.sections.map((section) => section.heading).join('；') }}</p>
-                <p v-else class="text-muted-foreground">{{ item.status === 'external' ? '无需投标文件响应' : '未找到响应章节' }}</p>
-              </td>
-              <td>
-                <p class="whitespace-pre-line leading-relaxed" :class="!item.basis ? 'text-muted-foreground' : ''">{{ item.basis || '—' }}</p>
-              </td>
-              <td>
-                <ul v-if="item.advice.length" class="list-disc pl-4 text-amber-700">
-                  <li v-for="advice in item.advice" :key="advice" class="whitespace-pre-line leading-relaxed">{{ advice }}</li>
-                </ul>
-                <p v-else class="text-muted-foreground">—</p>
-              </td>
-            </tr>
-          </tbody>
-        </table>
+      <div v-for="group in scoreGroups" :key="group.title" class="overflow-hidden rounded-lg border border-border bg-card">
+        <h4 class="border-b border-border bg-muted/50 px-3 py-1.5 text-[12px] font-medium">{{ group.title }}</h4>
+        <div v-for="item in group.items" :key="item.criterionId" class="grid grid-cols-1 gap-x-4 gap-y-1 border-b border-border px-3 py-2.5 text-[12px] last:border-b-0 lg:grid-cols-[220px_1fr_1fr]">
+          <div>
+            <p class="font-medium">{{ item.factor }}</p>
+            <p class="mt-0.5 text-[11px] text-muted-foreground">分值范围 {{ scoreRange(item) }}</p>
+            <span class="mt-1 inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[11px]" :class="SCORE_STYLE[item.status]">
+              <CheckCircle2 v-if="item.status === 'full'" class="size-3" />
+              <AlertTriangle v-else-if="item.status === 'missing' || item.status === 'partial'" class="size-3" />
+              <CircleDashed v-else class="size-3" />
+              {{ item.statusLabel }}
+            </span>
+            <p v-if="item.estimatedScore !== null && !item.deduction" class="mt-1 text-[11px]">
+              预估得分 <b class="text-primary">{{ item.estimatedScore }}</b>
+            </p>
+          </div>
+          <div>
+            <p class="text-[11px] text-muted-foreground">评审细则</p>
+            <p class="whitespace-pre-line leading-relaxed">{{ item.rule }}</p>
+          </div>
+          <div>
+            <p class="text-[11px] text-muted-foreground">响应章节</p>
+            <p v-if="item.sections.length">{{ item.sections.map((section) => section.heading).join('；') }}</p>
+            <p v-else class="text-muted-foreground">{{ item.status === 'external' ? '无需投标文件响应' : '未找到响应章节' }}</p>
+            <p v-if="item.basis" class="mt-1"><span class="text-[11px] text-muted-foreground">判定依据：</span>{{ item.basis }}</p>
+            <ul v-if="item.advice.length" class="mt-1 list-disc pl-4 text-amber-700">
+              <li v-for="advice in item.advice" :key="advice">{{ advice }}</li>
+            </ul>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -381,8 +321,6 @@ watch(
 
     <!-- 证件效期 -->
     <div v-show="activeTab === 'certificates'" class="space-y-2">
-      <BidGenExpiryPanel :active="activeTab === 'certificates'" :refresh-key="`${task.id}:${result.generatedAt}`" />
-      <p class="text-[12px] font-medium">本次生成时的证件效期快照 · {{ result.certificateCheck.checkedAt.replace('T', ' ') }}</p>
       <div
         class="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-md border px-3 py-2 text-[12px]"
         :class="result.certificateCheck.passed ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-red-200 bg-red-50 text-red-800'"
@@ -421,6 +359,43 @@ watch(
             </tr>
           </tbody>
         </table>
+      </div>
+    </div>
+
+    <!-- 风险自查与招标文件分析 -->
+    <div v-show="activeTab === 'risk'" class="grid grid-cols-1 gap-3 xl:grid-cols-2">
+      <div class="rounded-lg border border-border bg-card p-3">
+        <h4 class="mb-1 text-[12px] font-medium">废标风险自查（{{ result.riskCheck?.length ?? 0 }} 项）</h4>
+        <p class="mb-2 text-[11px] text-muted-foreground">交标前逐项处理；完整内容见下载文件中的《分析与风险自查报告》。</p>
+        <ul class="max-h-[480px] space-y-1.5 overflow-y-auto text-[12px]">
+          <li v-for="(risk, index) in result.riskCheck ?? []" :key="index" class="rounded border px-2 py-1.5"
+              :class="risk.level === '高' ? 'border-red-200 bg-red-50' : risk.level === '中' ? 'border-amber-200 bg-amber-50' : 'border-border'">
+            <p><span class="mr-1 font-semibold" :class="risk.level === '高' ? 'text-red-700' : risk.level === '中' ? 'text-amber-700' : 'text-muted-foreground'">[{{ risk.level }}] {{ risk.item }}</span>{{ risk.detail }}</p>
+            <p class="mt-0.5 text-[11px] text-muted-foreground">建议：{{ risk.suggestion }}</p>
+          </li>
+          <li v-if="!result.riskCheck?.length" class="text-emerald-600">未发现废标风险。</li>
+        </ul>
+      </div>
+      <div v-if="result.analysis" class="rounded-lg border border-border bg-card p-3 text-[12px]">
+        <h4 class="mb-2 text-[12px] font-medium">招标文件分析</h4>
+        <dl class="grid grid-cols-[7rem_1fr] gap-x-2 gap-y-1">
+          <template v-for="item in result.analysis.basics" :key="item.label">
+            <dt class="text-muted-foreground">{{ item.label }}</dt><dd>{{ item.value }}</dd>
+          </template>
+        </dl>
+        <p v-if="result.analysis.scoreGroups.length" class="mt-2">
+          分值构成：<span v-for="group in result.analysis.scoreGroups" :key="group.group" class="mr-2">{{ group.group }} {{ group.maxScore }}分</span>
+        </p>
+        <details v-if="result.analysis.vetoClauses.length" class="mt-2">
+          <summary class="cursor-pointer text-red-700">否决与实质性条款（{{ result.analysis.vetoClauses.length }} 条）</summary>
+          <ol class="mt-1 list-inside list-decimal space-y-1"><li v-for="(text, index) in result.analysis.vetoClauses" :key="index">{{ text }}</li></ol>
+        </details>
+        <details v-if="result.coverage?.length" class="mt-2">
+          <summary class="cursor-pointer">评分点覆盖自检（{{ result.coverage.length }} 项）</summary>
+          <ul class="mt-1 space-y-1">
+            <li v-for="item in result.coverage" :key="item.factor">{{ item.factor }}：{{ item.aspects.join('、') || '—' }}<span v-if="item.added.length" class="text-amber-700">（已补写：{{ item.added.join('、') }}）</span></li>
+          </ul>
+        </details>
       </div>
     </div>
 
@@ -472,26 +447,6 @@ watch(
 </template>
 
 <style scoped>
-.bid-score-scroll {
-  max-width: 100%;
-  max-height: 70vh;
-  overflow: auto;
-  scrollbar-gutter: stable;
-  scrollbar-width: auto;
-}
-.bid-score-table {
-  width: 100%;
-  min-width: 1600px;
-  table-layout: fixed;
-}
-.bid-score-table th,
-.bid-score-table td {
-  border-bottom: 1px solid var(--border);
-  padding: 10px 12px;
-  text-align: left;
-  vertical-align: top;
-  overflow-wrap: anywhere;
-}
 .bid-preview-host {
   max-height: 78vh;
   overflow: auto;

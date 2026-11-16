@@ -4,14 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { AlertTriangle, Loader2, Search, Upload } from 'lucide-vue-next'
 import { PageHeader, Panel, Tag } from '@/components/ui-kit'
 import TenderQaPanel from '@/components/tenders/TenderQaPanel.vue'
-import BidGenResultPanel from '@/components/bid-gen/BidGenResultPanel.vue'
 import { ApiError } from '@/lib/api'
-import {
-  fetchBidTask,
-  listBidTasks,
-  type BidTask,
-  type BidTaskSummary,
-} from '@/lib/bid-gen-api'
 import {
   TASK_STATUS_LABEL,
   TASK_STATUS_TONE,
@@ -42,9 +35,6 @@ const keyword = ref('')
 const items = ref<TenderRecordItem[]>([])
 const total = ref(0)
 const loading = ref(false)
-const generatedTasks = ref<BidTaskSummary[]>([])
-const generatedLoading = ref(false)
-const selectedGeneratedTask = ref<BidTask | null>(null)
 const err = ref('')
 const selectedId = ref('')
 const qaReport = ref<QaReport | null>(null)
@@ -66,14 +56,6 @@ const canSeeAll = computed(
 const selected = computed(
   () => items.value.find((it) => it.id === selectedId.value) || null,
 )
-
-const visibleGeneratedTasks = computed(() => {
-  const q = keyword.value.trim().toLowerCase()
-  if (!q) return generatedTasks.value
-  return generatedTasks.value.filter((task) =>
-    [task.projectName, task.archiveName, task.tenderNo].some((value) => value.toLowerCase().includes(q)),
-  )
-})
 
 const hasBiz = computed(() => Boolean(selected.value?.docxAvailable && selected.value?.docxFile))
 const hasTech = computed(
@@ -114,19 +96,6 @@ async function loadList() {
   }
 }
 
-async function loadGeneratedTasks() {
-  generatedLoading.value = true
-  try {
-    const tasks = await listBidTasks()
-    generatedTasks.value = tasks.filter((task) => task.status === 'generated')
-  } catch (e) {
-    // 生成任务和旧版评分任务相互独立；旧任务仍可正常使用。
-    if (!err.value) err.value = e instanceof ApiError || e instanceof Error ? e.message : '加载生成项目失败'
-  } finally {
-    generatedLoading.value = false
-  }
-}
-
 async function loadSaved(id: string) {
   try {
     const data = await fetchTenderQa(id, { volume: volume.value })
@@ -150,7 +119,6 @@ async function loadMaterialSlots(invitationId: string) {
 }
 
 async function selectRecord(id: string, syncQuery = true) {
-  selectedGeneratedTask.value = null
   selectedId.value = id
   pickFile.value = null
   qaError.value = ''
@@ -160,25 +128,6 @@ async function selectRecord(id: string, syncQuery = true) {
   else volume.value = 'business'
   if (syncQuery && String(route.query.record || '') !== id) {
     void router.replace({ path: '/tender-qa', query: { record: id } })
-  }
-}
-
-async function openGeneratedTask(id: string, syncQuery = true) {
-  generatedLoading.value = true
-  err.value = ''
-  try {
-    selectedId.value = ''
-    qaReport.value = null
-    materialSlots.value = []
-    selectedGeneratedTask.value = await fetchBidTask(id)
-    if (syncQuery && String(route.query.task || '') !== id) {
-      void router.replace({ path: '/tender-qa', query: { task: id } })
-    }
-  } catch (e) {
-    err.value = e instanceof ApiError || e instanceof Error ? e.message : '生成项目不存在'
-    selectedGeneratedTask.value = null
-  } finally {
-    generatedLoading.value = false
   }
 }
 
@@ -263,12 +212,9 @@ function onPickFile(ev: Event) {
 }
 
 onMounted(async () => {
-  await Promise.all([loadList(), loadGeneratedTasks()])
-  const tid = String(route.query.task || '').trim()
+  await loadList()
   const rid = String(route.query.record || '').trim()
-  if (tid) await openGeneratedTask(tid, false)
-  else if (rid) await ensureRecord(rid)
-  else if (generatedTasks.value[0]) await openGeneratedTask(generatedTasks.value[0].id)
+  if (rid) await ensureRecord(rid)
 })
 
 watch(keyword, () => {
@@ -282,13 +228,6 @@ watch(
   () => String(route.query.record || ''),
   (rid) => {
     if (rid && rid !== selectedId.value) void ensureRecord(rid)
-  },
-)
-
-watch(
-  () => String(route.query.task || ''),
-  (id) => {
-    if (id && id !== selectedGeneratedTask.value?.id) void openGeneratedTask(id, false)
   },
 )
 
@@ -323,7 +262,7 @@ const expiringMaterials = computed(() => materialSlots.value.flatMap((slot) =>
   <p v-if="err" class="mb-3 text-xs text-iron">{{ err }}</p>
 
   <div class="grid min-h-0 flex-1 grid-cols-1 gap-4 lg:grid-cols-[minmax(16rem,20rem)_1fr]">
-    <Panel title="已生成项目" :subtitle="`共 ${generatedTasks.length} 条`" flush>
+    <Panel :title="canSeeAll ? '全部任务' : '我的任务'" :subtitle="`共 ${total} 条`" flush>
       <div class="border-b border-border px-3 py-2">
         <label class="relative block">
           <Search class="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -334,44 +273,13 @@ const expiringMaterials = computed(() => materialSlots.value.flatMap((slot) =>
           />
         </label>
       </div>
-      <div v-if="generatedLoading && !generatedTasks.length" class="py-8 text-center text-xs text-muted-foreground">
-        正在加载生成项目…
+      <div v-if="loading && !items.length" class="py-16 text-center text-xs text-muted-foreground">
+        加载任务…
       </div>
-      <div v-else-if="!visibleGeneratedTasks.length" class="py-8 text-center text-xs text-muted-foreground">
-        还没有已生成项目。
+      <div v-else-if="!items.length" class="py-16 text-center text-xs text-muted-foreground">
+        还没有可评分的投标任务。
       </div>
-      <ul v-else class="max-h-[min(34vh,22rem)] overflow-y-auto">
-        <li v-for="item in visibleGeneratedTasks" :key="item.id">
-          <button
-            type="button"
-            class="w-full border-b border-border px-3 py-2.5 text-left hover:bg-accent/40"
-            :class="item.id === selectedGeneratedTask?.id ? 'bg-primary/10' : ''"
-            @click="openGeneratedTask(item.id)"
-          >
-            <div class="flex items-start justify-between gap-2">
-              <div class="min-w-0 flex-1 truncate text-[12px] font-medium">{{ item.projectName || item.archiveName }}</div>
-              <Tag tone="patina" class="h-5 min-w-[3.5rem] shrink-0 justify-center whitespace-nowrap">已生成</Tag>
-            </div>
-            <div class="mt-1 truncate text-[11px] text-muted-foreground">
-              {{ item.tenderNo || '未识别招标编号' }} · {{ item.updatedAt.replace('T', ' ') }}
-            </div>
-            <div class="mt-1 text-[11px] text-muted-foreground">
-              预计 {{ item.estimatedPages ? `${item.estimatedPages} 页` : '页数待估' }} · 点击查看生成标书信息
-            </div>
-          </button>
-        </li>
-      </ul>
-
-      <div class="border-y border-border bg-muted/20 px-3 py-2 text-[11px] font-medium text-muted-foreground">
-        {{ canSeeAll ? '全部评分任务' : '其他评分任务' }} · {{ total }} 条
-      </div>
-      <div v-if="loading && !items.length" class="py-8 text-center text-xs text-muted-foreground">
-        正在加载评分任务…
-      </div>
-      <div v-else-if="!items.length" class="py-8 text-center text-xs text-muted-foreground">
-        还没有其他评分任务。
-      </div>
-      <ul v-else class="max-h-[min(36vh,24rem)] overflow-y-auto">
+      <ul v-else class="max-h-[min(70vh,40rem)] overflow-y-auto">
         <li v-for="it in items" :key="it.id">
           <button
             type="button"
@@ -380,13 +288,13 @@ const expiringMaterials = computed(() => materialSlots.value.flatMap((slot) =>
             @click="selectRecord(it.id)"
           >
             <div class="flex items-start justify-between gap-2">
-              <div class="min-w-0 flex-1 truncate text-[12px] font-medium">{{ it.projectName || '未命名项目' }}</div>
-              <Tag v-if="it.qaScore != null" :tone="scoreTone(it.qaGrade)" class="shrink-0 whitespace-nowrap">{{ it.qaScore }}%</Tag>
+              <div class="min-w-0 truncate text-[12px] font-medium">{{ it.projectName || '未命名项目' }}</div>
+              <Tag v-if="it.qaScore != null" :tone="scoreTone(it.qaGrade)">{{ it.qaScore }}%</Tag>
               <span v-else class="shrink-0 text-[10px] text-muted-foreground">未检</span>
             </div>
             <div class="mt-1 flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
-              <span class="min-w-0 flex-1 truncate">{{ it.tenderer || '—' }}</span>
-              <Tag :tone="statusTone(it.status)" class="h-5 min-w-[3.5rem] shrink-0 justify-center whitespace-nowrap">{{ statusLabel(it.status) }}</Tag>
+              <span class="truncate">{{ it.tenderer || '—' }}</span>
+              <Tag :tone="statusTone(it.status)">{{ statusLabel(it.status) }}</Tag>
             </div>
             <div v-if="it.qaSummary" class="mt-1 flex flex-wrap gap-1">
               <Tag v-if="it.qaSummary.vetoRiskCount" tone="sulfur">否决 {{ it.qaSummary.vetoRiskCount }}</Tag>
@@ -401,47 +309,13 @@ const expiringMaterials = computed(() => materialSlots.value.flatMap((slot) =>
     </Panel>
 
     <div class="min-w-0 space-y-4">
-      <Panel v-if="!selected && !selectedGeneratedTask" title="评分说明">
+      <Panel v-if="!selected" title="评分说明">
         <p class="text-[12px] leading-relaxed text-muted-foreground">
           左侧选任务后，默认给服务器上的生成稿打分。若已用 WPS / Word 改过，把终稿 .docx 传上来，会用同一套规则和模型对照邀请书评分。
         </p>
       </Panel>
 
-      <template v-if="selectedGeneratedTask">
-        <Panel
-          :title="selectedGeneratedTask.tender.projectName || selectedGeneratedTask.archiveName"
-          :subtitle="selectedGeneratedTask.tender.tenderNo || '已生成项目'"
-        >
-          <dl class="grid grid-cols-2 gap-x-4 gap-y-2 text-[12px] sm:grid-cols-4">
-            <div>
-              <dt class="text-[11px] text-muted-foreground">生成状态</dt>
-              <dd class="mt-0.5"><Tag tone="patina">已生成</Tag></dd>
-            </div>
-            <div>
-              <dt class="text-[11px] text-muted-foreground">招标人 / 采购人</dt>
-              <dd class="mt-0.5 truncate">{{ selectedGeneratedTask.tender.purchasers.join('、') || '—' }}</dd>
-            </div>
-            <div>
-              <dt class="text-[11px] text-muted-foreground">投标截止时间</dt>
-              <dd class="mt-0.5">{{ selectedGeneratedTask.tender.bidDeadline || '—' }}</dd>
-            </div>
-            <div>
-              <dt class="text-[11px] text-muted-foreground">所投分标</dt>
-              <dd class="mt-0.5">{{ selectedGeneratedTask.selection.lotCodes.length || '—' }} 个</dd>
-            </div>
-          </dl>
-          <p v-if="selectedGeneratedTask.tender.warnings.length" class="mt-3 text-[11px] text-amber-700">
-            解析提示：{{ selectedGeneratedTask.tender.warnings.join('；') }}
-          </p>
-        </Panel>
-
-        <BidGenResultPanel v-if="selectedGeneratedTask.result" :task="selectedGeneratedTask" />
-        <Panel v-else title="生成结果">
-          <p class="text-[12px] text-muted-foreground">该项目已解析但尚未生成投标文件，请先在“AI标书生成”中完成生成。</p>
-        </Panel>
-      </template>
-
-      <template v-else-if="selected">
+      <template v-else>
         <Panel :title="selected.projectName || '未命名项目'" :subtitle="selected.tenderer || '—'">
           <dl class="grid grid-cols-2 gap-x-4 gap-y-2 text-[12px] sm:grid-cols-4">
             <div>

@@ -46,11 +46,11 @@ const selectedCategories = computed(
 const criteriaGroups = computed(() => {
   const groups: { title: string; applicable: boolean; items: TenderCriterion[]; maxScore: number }[] = []
   for (const criterion of tender.value.criteria) {
-    const title = criterion.volume === 'price' ? '报价评分标准' : criterion.volume === 'business' ? '商务 / 其他评分标准' : `技术评分标准${criterion.category ? ` · ${criterion.category}` : ''}`
+    const title = criterion.volume === 'business' ? '商务评分标准' : `技术评分标准 · ${criterion.category}`
     let group = groups.find((entry) => entry.title === title)
     if (!group) {
       const applicable =
-        criterion.volume !== 'technical' || !criterion.category ||
+        criterion.volume === 'business' ||
         [...selectedCategories.value].some((category) => category === criterion.category)
       group = { title, applicable, items: [], maxScore: 0 }
       groups.push(group)
@@ -171,7 +171,7 @@ function categoryChecked(category: string) {
         class="flex items-center gap-2 rounded px-1.5 py-1 text-[12px] hover:bg-accent/50"
         :style="{ paddingLeft: `${6 + file.depth * 20}px` }"
       >
-        <FileArchive v-if="file.suffix === '.zip'" class="size-3.5 shrink-0 text-amber-600" />
+        <FileArchive v-if="file.suffix === '.zip' || file.suffix === '.rar'" class="size-3.5 shrink-0 text-amber-600" />
         <FileText v-else-if="file.suffix === '.docx'" class="size-3.5 shrink-0 text-primary" />
         <FileSignature v-else-if="file.suffix === '.sign'" class="size-3.5 shrink-0 text-muted-foreground" />
         <FileIcon v-else class="size-3.5 shrink-0 text-muted-foreground" />
@@ -202,7 +202,7 @@ function categoryChecked(category: string) {
             <tr v-for="criterion in group.items" :key="criterion.criterionId" class="border-t border-border align-top">
               <td class="px-2 py-1.5 text-muted-foreground">{{ criterion.group }}</td>
               <td class="px-2 py-1.5 font-medium">{{ criterion.factor }}</td>
-              <td class="px-2 py-1.5">{{ criterion.maxScore === null ? '—' : `${criterion.minScore} ~ ${criterion.maxScore}` }}</td>
+              <td class="px-2 py-1.5">{{ criterion.maxScore === null ? '—' : criterion.minScore === null ? `${criterion.maxScore}` : `${criterion.minScore} ~ ${criterion.maxScore}` }}</td>
               <td class="whitespace-pre-line px-2 py-1.5 leading-relaxed">{{ criterion.rule }}</td>
             </tr>
           </tbody>

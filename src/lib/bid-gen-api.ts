@@ -38,7 +38,7 @@ export type TenderLot = {
 
 export type TenderCriterion = {
   criterionId: string
-  volume: 'business' | 'technical' | 'price'
+  volume: 'business' | 'technical'
   category: string
   group: string
   factor: string
@@ -108,7 +108,7 @@ export type ScoreStatus = 'full' | 'partial' | 'missing' | 'manual' | 'external'
 
 export type ScoreCheckItem = {
   criterionId: string
-  volume: 'business' | 'technical' | 'price'
+  volume: 'business' | 'technical'
   category: string
   group: string
   factor: string
@@ -132,7 +132,7 @@ export type ScoreCheckVolume = {
   total: number
   counts: Record<ScoreStatus, number>
   maxScore: number
-  estimatedScore: number | null
+  estimatedScore: number
   unestimated: number
   externalMaxScore: number
 }
@@ -141,9 +141,7 @@ export type ScoreCheck = {
   checkedAt: string
   items: ScoreCheckItem[]
   volumes: ScoreCheckVolume[]
-  coverage: number | null
-  status?: 'ready' | 'warning' | 'blocked'
-  message?: string
+  coverage: number
   expiredCertificates: string[]
   readBack: boolean
   passed: boolean
@@ -176,19 +174,6 @@ export type CertificateCheck = {
   passed: boolean
 }
 
-export type LibraryExpiry = {
-  warnDays: number
-  items: {
-    documentId: string
-    name: string
-    source: string
-    expire_at: string
-    expire_status: 'expired' | 'expiring'
-    expire_level: 'danger' | 'warning'
-    expire_days: number
-  }[]
-}
-
 export type ReviewItem = {
   section: string
   spec: string
@@ -217,6 +202,17 @@ export type GenerateResult = {
   certificateCheck: CertificateCheck
   pending: { section: string; hint: string }[]
   reviewItems: ReviewItem[]
+  /** 废标风险自查（高 / 中 / 低） */
+  riskCheck?: { level: '高' | '中' | '低'; item: string; detail: string; suggestion: string }[]
+  /** 招标文件分析 */
+  analysis?: {
+    basics: { label: string; value: string }[]
+    qualifications: string[]
+    scoreGroups: { group: string; maxScore: number }[]
+    vetoClauses: string[]
+    materials: { item: string; attachments: string[] }[]
+  }
+  coverage?: { factor: string; aspects: string[]; added: string[] }[]
   stats: {
     estimatedPages: number
     charCount: number
@@ -299,7 +295,11 @@ export type LibraryMatch = {
   groups: Record<'base' | 'people' | 'capability' | 'certificates', number>
   sources: Record<string, { documentId: string; name: string; title: string }[]>
   warnings: string[]
+  /** 资料库识别值与当前资料不同的字段；owner 非空表示该资料的企业主体与投标人不一致 */
+  suggestions?: Record<string, LibrarySuggestion[]>
 }
+
+export type LibrarySuggestion = { value: string; documentId: string; name: string; title: string; owner: string }
 
 function request<T>(path: string, method = 'GET', body?: unknown) {
   return apiRequest<T>(BASE + path, { method, body, token: getAccessToken() })
@@ -310,6 +310,21 @@ export const listBidTasks = () => request<BidTaskSummary[]>('/tasks')
 export const fetchBidTask = (id: string) => request<BidTask>(`/tasks/${id}`)
 
 export const deleteBidTask = (id: string) => request<{ id: string }>(`/tasks/${id}`, 'DELETE')
+
+export type CorpusSummary = {
+  sources: { id: string; name: string; sectionCount: number; importedAt: string }[]
+  sectionCount: number
+}
+
+export const fetchCorpus = () => request<CorpusSummary>('/corpus')
+
+export function importCorpusFile(file: File) {
+  const form = new FormData()
+  form.append('file', file)
+  return request<CorpusSummary>('/corpus', 'POST', form)
+}
+
+export const deleteCorpusSource = (id: string) => request<CorpusSummary>(`/corpus/${id}`, 'DELETE')
 
 export function uploadTenderArchive(file: File) {
   const form = new FormData()
@@ -328,13 +343,6 @@ export function downloadBidFile(taskId: string, fileName: string) {
   return apiDownload(`${BASE}/tasks/${taskId}/files/${encodeURIComponent(fileName)}`, {
     token: getAccessToken(),
     fallbackName: fileName,
-  })
-}
-
-export function downloadBidScoreCheck(taskId: string) {
-  return apiDownload(`${BASE}/tasks/${taskId}/score-check.xlsx`, {
-    token: getAccessToken(),
-    fallbackName: '评分标准自查.xlsx',
   })
 }
 
@@ -367,5 +375,3 @@ export function uploadCertificateFile(certificateId: string, file: File) {
 
 export const checkCertificates = (taskId = '') =>
   request<CertificateCheck>('/profile/certificate-check', 'POST', { taskId })
-
-export const fetchLibraryExpiry = () => request<LibraryExpiry>('/library/expiry')

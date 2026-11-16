@@ -36,7 +36,6 @@ const reindexing = ref(false)
 const fileInput = ref<HTMLInputElement | null>(null)
 const pendingKey = ref<string | null>(null)
 const pendingReplace = ref(true)
-const pendingReplaceSlot = ref<SlotStatus | null>(null)
 
 const showEditor = ref(false)
 const editingKey = ref<string | null>(null)
@@ -271,30 +270,11 @@ function isVirtualSlot(slot: SlotStatus | null): boolean {
   return Boolean(slot && slot.fileCount === 0 && !slot.docId)
 }
 
-function openFilePicker(slot: SlotStatus, replace: boolean) {
+function pickFiles(slot: SlotStatus, replace: boolean) {
   if (!slot.key) return
   pendingKey.value = slot.key
   pendingReplace.value = replace
   fileInput.value?.click()
-}
-
-function pickFiles(slot: SlotStatus, replace: boolean) {
-  if (!slot.key) return
-  if (replace && slot.fileCount > 0) {
-    pendingReplaceSlot.value = slot
-    return
-  }
-  openFilePicker(slot, replace)
-}
-
-function onReplaceOpen(open: boolean) {
-  if (!open) pendingReplaceSlot.value = null
-}
-
-function confirmReplaceUpload() {
-  const slot = pendingReplaceSlot.value
-  pendingReplaceSlot.value = null
-  if (slot) openFilePicker(slot, true)
 }
 
 async function onFileChange(ev: Event) {
@@ -660,14 +640,6 @@ async function onReindex(force = false) {
     destructive
     @update:open="onDeleteFileOpen"
     @confirm="confirmDeleteFile"
-  />
-  <AppAlertDialog
-    :open="Boolean(pendingReplaceSlot)"
-    title="当前资料项已有资料"
-    :description="`「${pendingReplaceSlot?.title || ''}」当前已有 ${pendingReplaceSlot?.fileCount || 0} 个资料，确定覆盖后现有资料会被替换。是否继续？`"
-    confirm-label="确定覆盖"
-    @update:open="onReplaceOpen"
-    @confirm="confirmReplaceUpload"
   />
 </template>
 
