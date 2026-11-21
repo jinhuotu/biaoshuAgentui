@@ -3,6 +3,8 @@ import DocumentExpiry from '@/components/DocumentExpiry.vue'
 import { computed, onUnmounted, ref, watch } from 'vue'
 import { ChevronLeft, ChevronRight, FileText, FolderOpen, ImageIcon, Loader2, Trash2, X } from 'lucide-vue-next'
 import { getApiBaseUrl } from '@/lib/api'
+import { getKnowledgeDocumentPreview } from '@/lib/knowledge-api'
+import { companyLibraryFilePath, isCompanyLibrary } from '@/lib/tender-companies-api'
 import {
   fetchTenderLibraryTextPreview,
   inferLibraryFileKind,
@@ -96,7 +98,9 @@ async function loadTextPreview(id: string) {
   if (!item || item.kind !== 'file') return
   textPreviewLoading.value = true
   try {
-    const data = await fetchTenderLibraryTextPreview(id)
+    const data = isCompanyLibrary(props.baseId)
+      ? await getKnowledgeDocumentPreview(props.baseId, id)
+      : await fetchTenderLibraryTextPreview(id)
     if (request !== textPreviewRequest) return
     textPreview.value = {
       id,
@@ -112,7 +116,10 @@ async function loadTextPreview(id: string) {
 }
 
 function fileUrl(id: string): string {
-  return `${getApiBaseUrl()}${tenderLibraryFilePath(id, { withToken: true })}`
+  const path = props.baseId && isCompanyLibrary(props.baseId)
+    ? companyLibraryFilePath(props.baseId, id, true)
+    : tenderLibraryFilePath(id, { withToken: true })
+  return getApiBaseUrl() + path
 }
 
 function formatSize(n: number): string {
@@ -256,12 +263,14 @@ onUnmounted(() => {
           }}</span>
           <input
             v-model="field.value"
+            :readonly="!removable"
             class="h-6 min-w-0 flex-1 rounded border border-border bg-transparent px-1 text-[11px]"
             @click.stop
             @change="saveFacts(it.id, it.file.facts?.role || 'person/legal')"
           />
         </div>
         <button
+          v-if="removable"
           type="button"
           class="h-6 rounded border border-border px-1.5 text-[10px] hover:bg-accent disabled:opacity-50"
           :disabled="savingId === it.id"

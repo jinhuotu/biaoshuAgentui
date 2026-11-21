@@ -58,7 +58,7 @@ function canSeeNavItem(
   if (it.adminOnly && !admin) return false
   if (admin) return true
   if (!menus || menus.length === 0) return it.href === '/'
-  if (['/tender-package', '/tender-package-wizard'].includes(it.href) && menus.includes('/tenders')) return true
+  if (['/tenders/workbench', '/tender-package', '/tender-package-wizard'].includes(it.href) && menus.includes('/tenders')) return true
   if (menus.includes(it.href)) return true
   if (isQuotePath(it.href) && QUOTE_FAMILY.some((h) => menus.includes(h))) return true
   return false
@@ -132,6 +132,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/approval', label: '审批流程', icon: BadgeCheck },
       { href: '/knowledge', label: '知识库', icon: LibraryBig },
       { href: '/tenders', label: 'AI标书生成', icon: FileText },
+      { href: '/tenders/workbench', label: '技术标工作台', icon: ClipboardList },
       { href: '/tender-package', label: '压缩包标书（高级模式）', icon: FolderOpen },
       { href: '/tender-qa', label: 'AI标书评分', icon: FileSearch },
       { href: QUOTE_NAV_HREF, label: QUOTE_NAV_LABEL, icon: FileSpreadsheet },

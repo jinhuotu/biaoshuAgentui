@@ -4,13 +4,11 @@ import { useRoute, useRouter } from 'vue-router'
 import { AlertTriangle, Loader2, Search, Upload } from 'lucide-vue-next'
 import { PageHeader, Panel, Tag } from '@/components/ui-kit'
 import TenderQaPanel from '@/components/tenders/TenderQaPanel.vue'
+import TenderStatusTag from '@/components/tenders/TenderStatusTag.vue'
+import BidGenResultPanel from '@/components/bid-gen/BidGenResultPanel.vue'
+import { fetchBidRecordReview, type BidTask } from '@/lib/bid-gen-api'
 import { ApiError } from '@/lib/api'
-import {
-  TASK_STATUS_LABEL,
-  TASK_STATUS_TONE,
-  formatBudget,
-  type TaskStatus,
-} from '@/lib/tender-tasks'
+import { formatBudget } from '@/lib/tender-tasks'
 import {
   fetchTenderQa,
   fetchTenderRecord,
@@ -40,6 +38,9 @@ const selectedId = ref('')
 const qaReport = ref<QaReport | null>(null)
 const qaLoading = ref(false)
 const qaError = ref('')
+const bidReview = ref<BidTask | null>(null)
+const reviewLoading = ref(false)
+const reviewError = ref('')
 const materialSlots = ref<SlotStatus[]>([])
 const materialLoading = ref(false)
 const reviewingItem = ref('')
@@ -61,16 +62,6 @@ const hasBiz = computed(() => Boolean(selected.value?.docxAvailable && selected.
 const hasTech = computed(
   () => Boolean(selected.value?.techDocxAvailable && selected.value?.techDocxFile),
 )
-
-function statusLabel(status?: string) {
-  const key = (status || 'processing') as TaskStatus
-  return TASK_STATUS_LABEL[key] || status || '编制中'
-}
-
-function statusTone(status?: string) {
-  const key = (status || 'processing') as TaskStatus
-  return TASK_STATUS_TONE[key] || 'default'
-}
 
 function scoreTone(grade?: string | null) {
   if (grade === 'good') return 'patina'
@@ -97,12 +88,21 @@ async function loadList() {
 }
 
 async function loadSaved(id: string) {
-  try {
-    const data = await fetchTenderQa(id, { volume: volume.value })
-    qaReport.value = data.report || null
-  } catch {
-    qaReport.value = null
+  const requestedVolume = volume.value
+  const isNew = items.value.find((item) => item.id === id)?.source === 'bidgen'
+  reviewLoading.value = isNew
+  reviewError.value = ''
+  const [qa, review] = await Promise.allSettled([
+    fetchTenderQa(id, { volume: requestedVolume }),
+    isNew ? fetchBidRecordReview(id) : Promise.resolve(null),
+  ])
+  if (id !== selectedId.value || requestedVolume !== volume.value) return
+  qaReport.value = qa.status === 'fulfilled' ? qa.value.report || null : null
+  bidReview.value = review.status === 'fulfilled' ? review.value : null
+  if (review.status === 'rejected') {
+    reviewError.value = review.reason instanceof Error ? review.reason.message : '新版自查结果加载失败'
   }
+  reviewLoading.value = false
 }
 
 async function loadMaterialSlots(invitationId: string) {
@@ -120,10 +120,22 @@ async function loadMaterialSlots(invitationId: string) {
 
 async function selectRecord(id: string, syncQuery = true) {
   selectedId.value = id
+  bidReview.value = null
+  qaReport.value = null
   pickFile.value = null
   qaError.value = ''
-  const row = items.value.find((it) => it.id === id)
-  void loadMaterialSlots(row?.brief?.invitationId || '')
+  let row = items.value.find((it) => it.id === id)
+  try {
+    const detail = await fetchTenderRecord(id)
+    if (selectedId.value !== id) return
+    items.value = items.value.map((it) => it.id === id ? detail : it)
+    row = detail
+  } catch (e) {
+    if (selectedId.value === id) qaError.value = e instanceof Error ? e.message : '读取任务详情失败'
+  }
+  if (selectedId.value !== id) return
+  if (row?.source !== 'bidgen') void loadMaterialSlots(row?.brief?.invitationId || '')
+  else materialSlots.value = []
   if (row?.techDocxAvailable && !row.docxAvailable) volume.value = 'technical'
   else volume.value = 'business'
   if (syncQuery && String(route.query.record || '') !== id) {
@@ -147,14 +159,18 @@ async function ensureRecord(id: string) {
 
 async function runGenerated() {
   const id = selectedId.value
-  if (!id) return
+  const requestedVolume = volume.value
+  if (!id || qaLoading.value) return
   qaLoading.value = true
   qaError.value = ''
   try {
-    qaReport.value = await inspectTenderQa(id, { volume: volume.value })
+    const report = await inspectTenderQa(id, { volume: requestedVolume })
+    if (selectedId.value === id && volume.value === requestedVolume) qaReport.value = report
     await loadList()
   } catch (e) {
-    qaError.value = e instanceof ApiError || e instanceof Error ? e.message : '评分失败'
+    if (selectedId.value === id && volume.value === requestedVolume) {
+      qaError.value = e instanceof ApiError || e instanceof Error ? e.message : '评分失败'
+    }
   } finally {
     qaLoading.value = false
   }
@@ -163,6 +179,8 @@ async function runGenerated() {
 async function runUpload() {
   const id = selectedId.value
   const file = pickFile.value
+  const requestedVolume = volume.value
+  if (qaLoading.value) return
   if (!id || !file) {
     qaError.value = '请先选择终稿 Word'
     return
@@ -171,10 +189,13 @@ async function runUpload() {
   qaLoading.value = true
   qaError.value = ''
   try {
-    qaReport.value = await inspectTenderQaUpload(id, file, { volume: volume.value })
+    const report = await inspectTenderQaUpload(id, file, { volume: requestedVolume })
+    if (selectedId.value === id && volume.value === requestedVolume) qaReport.value = report
     await loadList()
   } catch (e) {
-    qaError.value = e instanceof ApiError || e instanceof Error ? e.message : '评分失败'
+    if (selectedId.value === id && volume.value === requestedVolume) {
+      qaError.value = e instanceof ApiError || e instanceof Error ? e.message : '评分失败'
+    }
   } finally {
     uploading.value = false
     qaLoading.value = false
@@ -234,6 +255,7 @@ watch(
 watch([selectedId, volume], ([id]) => {
   if (!id) {
     qaReport.value = null
+    bidReview.value = null
     materialSlots.value = []
     return
   }
@@ -287,14 +309,14 @@ const expiringMaterials = computed(() => materialSlots.value.flatMap((slot) =>
             :class="it.id === selectedId ? 'bg-iron/10' : ''"
             @click="selectRecord(it.id)"
           >
-            <div class="flex items-start justify-between gap-2">
-              <div class="min-w-0 truncate text-[12px] font-medium">{{ it.projectName || '未命名项目' }}</div>
-              <Tag v-if="it.qaScore != null" :tone="scoreTone(it.qaGrade)">{{ it.qaScore }}%</Tag>
-              <span v-else class="shrink-0 text-[10px] text-muted-foreground">未检</span>
+            <div class="flex min-w-0 items-start justify-between gap-2">
+              <div class="min-w-0 flex-1 truncate text-[12px] font-medium" :title="it.projectName">{{ it.projectName || '未命名项目' }}</div>
+              <Tag v-if="it.qaScore != null" :tone="scoreTone(it.qaGrade)" class-name="shrink-0 whitespace-nowrap">{{ it.qaScore }}%</Tag>
+              <span v-else class="shrink-0 text-[10px] text-muted-foreground">{{ it.source === 'bidgen' ? '生成时已自查' : '未检' }}</span>
             </div>
-            <div class="mt-1 flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
-              <span class="truncate">{{ it.tenderer || '—' }}</span>
-              <Tag :tone="statusTone(it.status)">{{ statusLabel(it.status) }}</Tag>
+            <div class="mt-1 flex min-w-0 items-center justify-between gap-2 text-[11px] text-muted-foreground">
+              <span class="min-w-0 flex-1 truncate" :title="it.tenderer">{{ it.tenderer || '—' }}</span>
+              <TenderStatusTag :status="it.status || 'processing'" />
             </div>
             <div v-if="it.qaSummary" class="mt-1 flex flex-wrap gap-1">
               <Tag v-if="it.qaSummary.vetoRiskCount" tone="sulfur">否决 {{ it.qaSummary.vetoRiskCount }}</Tag>
@@ -321,7 +343,7 @@ const expiringMaterials = computed(() => materialSlots.value.flatMap((slot) =>
             <div>
               <dt class="text-[11px] text-muted-foreground">状态</dt>
               <dd class="mt-0.5">
-                <Tag :tone="statusTone(selected.status)">{{ statusLabel(selected.status) }}</Tag>
+                <TenderStatusTag :status="selected.status || 'processing'" />
               </dd>
             </div>
             <div>
@@ -396,7 +418,19 @@ const expiringMaterials = computed(() => materialSlots.value.flatMap((slot) =>
           <p v-if="qaError" class="mt-2 text-[11px] text-iron">{{ qaError }}</p>
         </Panel>
 
-        <Panel title="投标资料有效期提醒" subtitle="当前任务资料槽位中的已过期或临近到期资料">
+        <div v-if="selected.source === 'bidgen'" class="space-y-3">
+          <Panel title="新版标书生成与自查" subtitle="当前生成版本的风险分析、评分标准自查、目录、Word 预览、证件效期和待补充事项。下方 AI 评分及终稿评分单独展示。">
+            <p v-if="reviewLoading" class="text-[12px] text-muted-foreground">正在加载当前版本自查结果…</p>
+            <p v-else-if="reviewError" role="alert" class="text-[12px] text-iron">{{ reviewError }}</p>
+            <p v-else-if="bidReview?.result" class="text-[12px] text-muted-foreground">
+              生成时间：{{ bidReview.result.generatedAt.replace('T', ' ') }} ·
+              {{ bidReview.versionConfirmed ? '当前版本已确认' : '当前版本待检查确认' }}
+            </p>
+          </Panel>
+          <BidGenResultPanel v-if="bidReview?.result" :key="`${bidReview.id}-${bidReview.result.generatedAt}`" :task="bidReview" :record-id="selectedId" />
+        </div>
+
+        <Panel v-if="selected.source !== 'bidgen'" title="投标资料有效期提醒" subtitle="当前任务资料槽位中的已过期或临近到期资料">
           <div v-if="materialLoading" class="flex items-center gap-2 py-2 text-[12px] text-muted-foreground">
             <Loader2 class="size-3.5 animate-spin" />正在检查资料有效期…
           </div>

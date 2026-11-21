@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ArrowLeft, ArrowRight, Check, FileArchive, FolderOpen, History, RefreshCw, Sparkles, Trash2, UploadCloud } from 'lucide-vue-next'
 import { PageHeader, Panel } from '@/components/ui-kit'
@@ -12,12 +12,15 @@ import {
   deleteBidTask,
   fetchBidTask,
   generateBid,
+  confirmBidVersion,
   listBidTasks,
   uploadTenderArchive,
   type BidTask,
   type BidTaskSummary,
   type CertificateCheck,
 } from '@/lib/bid-gen-api'
+import { submitTenderRecord } from '@/lib/tenders-api'
+import { TASK_STATUS_LABEL, type TaskStatus } from '@/lib/tender-tasks'
 
 const STEPS = [
   { title: '上传招标文件', hint: '压缩包 / 嵌套压缩包' },
@@ -32,7 +35,7 @@ const router = useRouter()
 const stepIndex = ref(0)
 const task = ref<BidTask | null>(null)
 const tasks = ref<BidTaskSummary[]>([])
-const busy = ref<'' | 'upload' | 'open' | 'generate'>('')
+const busy = ref<'' | 'upload' | 'open' | 'generate' | 'confirm' | 'submit'>('')
 const errorMessage = ref('')
 const dragging = ref(false)
 const lotCodes = ref<string[]>([])
@@ -98,6 +101,7 @@ function onDrop(event: DragEvent) {
 }
 
 async function openTask(id: string) {
+  if (busy.value) return
   busy.value = 'open'
   errorMessage.value = ''
   try {
@@ -111,6 +115,7 @@ async function openTask(id: string) {
 }
 
 async function removeTask(id: string) {
+  if (busy.value) return
   if (!window.confirm('确定删除这条生成记录及其文件吗？删除后不可恢复。')) return
   try {
     await deleteBidTask(id)
@@ -122,6 +127,7 @@ async function removeTask(id: string) {
 }
 
 function startOver() {
+  if (busy.value) return
   task.value = null
   stepIndex.value = 0
   errorMessage.value = ''
@@ -129,7 +135,7 @@ function startOver() {
 }
 
 async function generate() {
-  if (!task.value) return
+  if (!task.value || busy.value || task.value.workflowLocked) return
   errorMessage.value = ''
   if (task.value.tender.lots.length && !lotCodes.value.length) {
     errorMessage.value = '请先在“解析确认”中至少选择一个所投分标'
@@ -154,6 +160,38 @@ async function generate() {
     busy.value = ''
   }
 }
+
+async function confirmVersion() {
+  if (!task.value?.recordId || !task.value.result || busy.value || task.value.workflowLocked) return
+  busy.value = 'confirm'
+  errorMessage.value = ''
+  try {
+    await confirmBidVersion(task.value.id, task.value.result.generatedAt, task.value.result.contentDigest || '')
+    task.value = { ...task.value, versionConfirmed: true }
+  } catch (error) {
+    errorMessage.value = describeError(error)
+  } finally {
+    busy.value = ''
+  }
+}
+
+async function submitApproval() {
+  if (!task.value?.recordId || busy.value || !task.value.versionConfirmed || task.value.workflowLocked) return
+  busy.value = 'submit'
+  errorMessage.value = ''
+  try {
+    const record = await submitTenderRecord(task.value.recordId)
+    task.value = { ...task.value, workflowStatus: record.status, workflowLocked: record.workflowLocked }
+  } catch (error) {
+    errorMessage.value = describeError(error)
+  } finally {
+    busy.value = ''
+  }
+}
+
+watch(() => route.query.id, (id) => {
+  if (typeof id === 'string' && id !== task.value?.id && !busy.value) void openTask(id)
+})
 
 function goStep(index: number) {
   if (index <= maxStep.value || index <= stepIndex.value) stepIndex.value = index
@@ -304,7 +342,14 @@ onMounted(async () => {
 
     <!-- 4 结果 -->
     <div v-if="task?.result" v-show="stepIndex === 3">
-      <BidGenResultPanel :task="task" />
+      <div v-if="task.recordId" class="mb-3 flex flex-wrap items-center gap-3 rounded-lg border border-border bg-card p-3 text-[12px]">
+        <span>任务状态：<b>{{ TASK_STATUS_LABEL[task.workflowStatus as TaskStatus] || task.workflowStatus }}</b></span>
+        <span>{{ task.versionConfirmed ? '当前版本已确认' : '请检查文件、补充资料后确认当前版本' }}</span>
+        <RouterLink to="/work-tasks" class="text-primary">查看工作任务</RouterLink>
+        <RouterLink :to="{ path: '/tender-qa', query: { record: task.recordId } }" class="text-primary">进入标书评分</RouterLink>
+        <RouterLink v-if="task.workflowLocked" to="/approval" class="text-primary">查看审批流程</RouterLink>
+      </div>
+      <BidGenResultPanel :task="task" :record-id="task.recordId || undefined" />
     </div>
 
     <!-- 底部操作 -->
@@ -316,6 +361,16 @@ onMounted(async () => {
         证件库有 {{ certificateIssues }} 项过期或缺失，建议先处理；仍可继续生成。
       </span>
       <span class="flex-1" />
+      <template v-if="stepIndex === 3 && task.recordId && !task.workflowLocked">
+        <button type="button" class="rounded-md border border-primary px-3 py-1.5 text-[12px] text-primary disabled:opacity-50"
+          :disabled="Boolean(busy) || task.versionConfirmed" @click="confirmVersion">
+          {{ busy === 'confirm' ? '正在确认…' : task.versionConfirmed ? '当前版本已确认' : '已检查，确认当前版本' }}
+        </button>
+        <button type="button" class="rounded-md border border-primary px-3 py-1.5 text-[12px] text-primary disabled:opacity-50"
+          :disabled="Boolean(busy) || !task.versionConfirmed" @click="submitApproval">
+          {{ busy === 'submit' ? '正在提交…' : '提交审批' }}
+        </button>
+      </template>
       <button
         v-if="stepIndex === 1"
         type="button"
@@ -327,11 +382,11 @@ onMounted(async () => {
       <button
         type="button"
         class="inline-flex items-center gap-1.5 rounded-md bg-primary px-4 py-1.5 text-[13px] text-primary-foreground disabled:opacity-50"
-        :disabled="busy === 'generate'"
+        :disabled="Boolean(busy) || task.workflowLocked"
         @click="generate"
       >
         <Sparkles class="size-4" />
-        {{ busy === 'generate' ? '正在生成…' : task.result ? '按当前资料重新生成' : '生成投标文件' }}
+        {{ task.workflowLocked ? '当前版本已锁定' : busy === 'generate' ? '正在生成…' : task.result ? '按当前资料重新生成' : '生成投标文件' }}
       </button>
     </div>
   </div>

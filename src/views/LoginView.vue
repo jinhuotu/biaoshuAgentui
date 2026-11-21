@@ -60,7 +60,7 @@ async function onSubmit() {
     <div class="login-stage">
       <section class="login-panel" aria-label="账号登录">
         <header class="login-panel__head">
-          <p class="login-panel__eyebrow">河南伟泰光电科技</p>
+          <p class="login-panel__eyebrow">河南优祺智能科技</p>
           <h1 class="login-panel__title">欢迎登录</h1>
           <p class="login-panel__desc">智能体交互系统 · 知识库 · 投标与布置</p>
         </header>

@@ -7,7 +7,7 @@ import { useNavDragReorder } from '@/composables/useNavDragReorder'
 import { useOrderedPrimaryNav } from '@/composables/useOrderedPrimaryNav'
 import { cn } from '@/lib/utils'
 import { useMobileMenuStore } from '@/stores/mobile-menu'
-import weitaiLogo from '@/assets/weitai-logo.jpg'
+import youqiLogo from '@/assets/youqi-logo.jpg'
 
 const route = useRoute()
 const mobileMenu = useMobileMenuStore()
@@ -81,13 +81,13 @@ onUnmounted(() => {
   <aside class="shell-sidebar hidden lg:flex">
     <div class="shell-sidebar__brand">
       <img
-        :src="weitaiLogo"
-        alt="伟泰光电"
-        class="size-9 rounded-full object-cover shadow-sm ring-1 ring-black/5"
+        :src="youqiLogo"
+        alt="优祺智能"
+        class="size-10 rounded-md object-cover shadow-sm ring-1 ring-black/5"
       />
       <div class="leading-tight">
-        <div class="text-[14px] font-semibold tracking-wide text-foreground">伟泰光电</div>
-        <div class="font-mono text-[10px] tracking-[0.16em] text-muted-foreground">WEITAI · v0.1</div>
+        <div class="text-[14px] font-semibold tracking-wide text-foreground">优祺智能</div>
+        <div class="font-mono text-[10px] tracking-[0.16em] text-muted-foreground">YOUQI · v0.1</div>
       </div>
     </div>
 
@@ -255,13 +255,13 @@ onUnmounted(() => {
   >
     <div class="flex h-14 items-center gap-2 border-b border-border px-4">
       <img
-        :src="weitaiLogo"
-        alt="伟泰光电"
-        class="size-8 rounded-full object-cover ring-1 ring-black/5"
+        :src="youqiLogo"
+        alt="优祺智能"
+        class="size-9 rounded-md object-cover ring-1 ring-black/5"
       />
       <div class="flex-1 leading-tight">
-        <div class="text-[14px] font-semibold text-foreground">伟泰光电</div>
-        <div class="font-mono text-[10px] tracking-[0.14em] text-muted-foreground">WEITAI</div>
+        <div class="text-[14px] font-semibold text-foreground">优祺智能</div>
+        <div class="font-mono text-[10px] tracking-[0.14em] text-muted-foreground">YOUQI</div>
       </div>
       <button
         type="button"

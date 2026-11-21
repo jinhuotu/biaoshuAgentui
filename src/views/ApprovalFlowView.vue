@@ -12,6 +12,7 @@ import {
   stepIndex,
   stepsForTask,
   useTenderTasks,
+  taskEditLocation,
   type TenderTask,
 } from '@/lib/tender-tasks'
 import {
@@ -156,7 +157,7 @@ function openView(task: TenderTask) {
 }
 
 function openEdit(task: TenderTask) {
-  void router.push({ path: '/tenders', query: { record: task.recordId } })
+  void router.push(taskEditLocation(task))
 }
 
 function openApprove(task: TenderTask) {

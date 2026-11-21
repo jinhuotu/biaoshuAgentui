@@ -11,6 +11,7 @@ import {
   matchKeyword,
   paginate,
   useTenderTasks,
+  taskEditLocation,
   type TaskStatus,
   type TenderTask,
 } from '@/lib/tender-tasks'
@@ -64,7 +65,7 @@ function openView(task: TenderTask) {
 }
 
 function openEdit(task: TenderTask) {
-  void router.push({ path: '/tenders', query: { record: task.recordId } })
+  void router.push(taskEditLocation(task))
 }
 
 async function onSubmit(task: TenderTask) {

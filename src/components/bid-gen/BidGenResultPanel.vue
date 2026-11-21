@@ -12,7 +12,7 @@ import {
   type ScoreStatus,
 } from '@/lib/bid-gen-api'
 
-const props = defineProps<{ task: BidTask }>()
+const props = defineProps<{ task: BidTask; recordId?: string }>()
 
 const TABS = [
   { key: 'risk', label: '风险自查与分析' },
@@ -57,6 +57,7 @@ const errorMessage = ref('')
 let previewToken = 0
 
 const result = computed(() => props.task.result!)
+const hasScoreResults = computed(() => result.value.scoreCheck.available ?? !!result.value.scoreCheck.items.length)
 const wordFiles = computed(() => result.value.files.filter((file) => file.name.endsWith('.docx')))
 const scoreItems = computed<ScoreCheckItem[]>(() =>
   result.value.scoreCheck.items.filter((item) => scoreFilter.value === 'all' || item.status === scoreFilter.value),
@@ -95,7 +96,7 @@ async function download(name: string) {
   downloading.value = name
   errorMessage.value = ''
   try {
-    await downloadBidFile(props.task.id, name)
+    await downloadBidFile(props.task.id, name, props.recordId)
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : String(error)
   } finally {
@@ -110,7 +111,7 @@ async function renderPreview() {
   previewState.value = 'loading'
   previewError.value = ''
   try {
-    const blob = await fetchBidFileBlob(props.task.id, previewFile.value)
+    const blob = await fetchBidFileBlob(props.task.id, previewFile.value, props.recordId)
     if (token !== previewToken) return
     host.innerHTML = ''
     await renderAsync(blob, host, undefined, {
@@ -130,6 +131,15 @@ async function renderPreview() {
     previewError.value = error instanceof Error ? error.message : String(error)
   }
 }
+
+watch(() => [props.task.id, props.task.result?.generatedAt], () => {
+  previewToken += 1
+  previewFile.value = ''
+  previewState.value = 'idle'
+  previewError.value = ''
+  errorMessage.value = ''
+  activeTab.value = 'risk'
+})
 
 watch(
   () => [activeTab.value, previewFile.value, result.value.generatedAt],
@@ -164,7 +174,8 @@ watch(
       </div>
       <div class="rounded-lg border border-border bg-card p-3">
         <p class="text-[11px] text-muted-foreground">评分项响应覆盖率</p>
-        <p class="mt-1 text-xl font-semibold" :class="result.scoreCheck.passed ? 'text-emerald-600' : 'text-amber-600'">{{ result.scoreCheck.coverage }}%</p>
+        <p v-if="hasScoreResults" class="mt-1 text-xl font-semibold" :class="result.scoreCheck.passed ? 'text-emerald-600' : 'text-amber-600'">{{ result.scoreCheck.coverage }}%</p>
+        <p v-else class="mt-1 text-sm font-semibold text-amber-700">无法核验</p>
       </div>
       <div class="rounded-lg border border-border bg-card p-3">
         <p class="text-[11px] text-muted-foreground">待补充 / 需核对</p>
@@ -218,13 +229,17 @@ watch(
 
     <!-- 评分自查 -->
     <div v-show="activeTab === 'score'" class="space-y-3">
+      <p v-if="!hasScoreResults" class="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-800">
+        {{ task.tender.criteria.length ? '当前生成稿没有评分自查条目，请核对所投品类后重新生成。' : '未识别到可核验的评分标准，请核对招标正文和评分附件。' }}
+      </p>
       <div class="grid grid-cols-1 gap-3 lg:grid-cols-2">
         <div v-for="volume in result.scoreCheck.volumes" :key="volume.volume" class="rounded-lg border border-border bg-card p-3 text-[12px]">
           <div class="flex items-center justify-between">
             <span class="font-medium">{{ volume.label }}（共 {{ volume.total }} 项）</span>
-            <span>
+            <span v-if="volume.estimatedCount !== 0">
               可量化项预估 <b class="text-[15px] text-primary">{{ volume.estimatedScore }}</b> / {{ volume.maxScore }} 分
             </span>
+            <span v-else class="text-muted-foreground">待核验</span>
           </div>
           <div class="mt-2 flex h-2 overflow-hidden rounded-full bg-muted">
             <span class="bg-emerald-500" :style="{ width: `${(100 * volume.counts.full) / volume.total}%` }" />
@@ -243,7 +258,7 @@ watch(
       <p v-if="result.scoreCheck.expiredCertificates.length" class="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-[12px] text-red-700">
         以下证件在投标截止日已失效，未计入得分支撑：{{ result.scoreCheck.expiredCertificates.join('、') }}
       </p>
-      <div class="flex flex-wrap items-center gap-1.5 text-[12px]">
+      <div v-if="hasScoreResults" class="flex flex-wrap items-center gap-1.5 text-[12px]">
         <button
           v-for="filter in SCORE_FILTERS"
           :key="filter.key"
@@ -281,7 +296,9 @@ watch(
           <div>
             <p class="text-[11px] text-muted-foreground">响应章节</p>
             <p v-if="item.sections.length">{{ item.sections.map((section) => section.heading).join('；') }}</p>
-            <p v-else class="text-muted-foreground">{{ item.status === 'external' ? '无需投标文件响应' : '未找到响应章节' }}</p>
+            <p v-else class="text-muted-foreground">
+              {{ item.status === 'external' ? (item.sourcePath ? '按评分细则核对资料要求' : '无需投标文件响应') : '未找到响应章节' }}
+            </p>
             <p v-if="item.basis" class="mt-1"><span class="text-[11px] text-muted-foreground">判定依据：</span>{{ item.basis }}</p>
             <ul v-if="item.advice.length" class="mt-1 list-disc pl-4 text-amber-700">
               <li v-for="advice in item.advice" :key="advice">{{ advice }}</li>

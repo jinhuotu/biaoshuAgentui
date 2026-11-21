@@ -6,7 +6,7 @@ import { useAuthStore } from '@/stores/auth'
 import { useThemeStore } from '@/stores/theme'
 import { useMobileMenuStore } from '@/stores/mobile-menu'
 import AccentPalettePicker from '@/components/theme/AccentPalettePicker.vue'
-import weitaiLogo from '@/assets/weitai-logo.jpg'
+import youqiLogo from '@/assets/youqi-logo.jpg'
 
 const auth = useAuthStore()
 const theme = useThemeStore()
@@ -115,13 +115,13 @@ async function onLogout() {
 
       <div class="ml-1 flex items-center gap-2 border-l border-border/70 pl-2">
         <img
-          :src="weitaiLogo"
-          alt="伟泰光电"
-          class="size-7 rounded-full object-cover shadow-sm ring-1 ring-black/5"
+          :src="youqiLogo"
+          alt="优祺智能"
+          class="size-8 rounded-md object-cover shadow-sm ring-1 ring-black/5"
         />
         <div class="hidden leading-tight md:block">
           <div class="text-xs font-medium">{{ displayName }}</div>
-          <div class="text-[10px] text-muted-foreground">伟泰光电 · {{ roleLabel }}</div>
+          <div class="text-[10px] text-muted-foreground">优祺智能 · {{ roleLabel }}</div>
         </div>
         <button
           type="button"

@@ -28,10 +28,13 @@ const component = moduleFrom(compiled, filename, {
   vue: { ...vue, onMounted() {} },
   'vue-router': { useRoute: () => ({ path: '/tenders', query: {} }), useRouter: () => ({ replace: async () => {} }) },
   '@/components/ui-kit': {},
+  '@/components/bid-gen/BidGenCorpusPanel.vue': {},
   '@/components/bid-gen/BidGenProfilePanel.vue': {},
   '@/components/bid-gen/BidGenResultPanel.vue': {},
   '@/components/bid-gen/BidGenTenderPanel.vue': {},
   '@/lib/bid-gen-upload': helper,
+  '@/lib/tenders-api': {},
+  '@/lib/tender-tasks': {},
   '@/lib/bid-gen-api': {
     listBidTasks: async () => [],
     uploadTenderArchive: async file => {

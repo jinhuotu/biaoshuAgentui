@@ -32,6 +32,7 @@ export type TenderLot = {
   quantity: string
   packageRange: string
   weights: string[]
+  scoringCategory?: string
   performanceRequirement: string
   awardRule: string
 }
@@ -45,6 +46,7 @@ export type TenderCriterion = {
   minScore: number | null
   maxScore: number | null
   rule: string
+  sourcePath?: string
 }
 
 export type FormatItem = {
@@ -56,6 +58,7 @@ export type FormatItem = {
   hasFormat: boolean
   notApplicable: boolean
   port: string
+  submissionMode?: '' | 'tool_generated' | 'conditional_deviation'
 }
 
 export type TechSpec = {
@@ -82,6 +85,7 @@ export type TenderInfo = {
   consortiumAllowed: boolean
   lots: TenderLot[]
   criteria: TenderCriterion[]
+  scoringWeights?: Record<string, { technical: number; business: number; price: number }>
   formatItems: FormatItem[]
   techSpecs: TechSpec[]
   files: TenderFile[]
@@ -115,6 +119,7 @@ export type ScoreCheckItem = {
   minScore: number | null
   maxScore: number | null
   rule: string
+  sourcePath?: string
   deduction: boolean
   status: ScoreStatus
   statusLabel: string
@@ -133,6 +138,7 @@ export type ScoreCheckVolume = {
   counts: Record<ScoreStatus, number>
   maxScore: number
   estimatedScore: number
+  estimatedCount?: number
   unestimated: number
   externalMaxScore: number
 }
@@ -144,6 +150,7 @@ export type ScoreCheck = {
   coverage: number
   expiredCertificates: string[]
   readBack: boolean
+  available?: boolean
   passed: boolean
 }
 
@@ -196,6 +203,7 @@ export type OutputFile = {
 
 export type GenerateResult = {
   generatedAt: string
+  contentDigest?: string
   files: OutputFile[]
   outline: OutlineNode[]
   scoreCheck: ScoreCheck
@@ -228,6 +236,10 @@ export type GenerateResult = {
 
 export type BidTask = {
   id: string
+  recordId?: string | null
+  workflowStatus?: string | null
+  workflowLocked?: boolean
+  versionConfirmed?: boolean
   archiveName: string
   status: 'parsed' | 'generated'
   createdAt: string
@@ -309,6 +321,11 @@ export const listBidTasks = () => request<BidTaskSummary[]>('/tasks')
 
 export const fetchBidTask = (id: string) => request<BidTask>(`/tasks/${id}`)
 
+export const fetchBidRecordReview = (recordId: string) => request<BidTask>(`/records/${recordId}/review`)
+
+export const confirmBidVersion = (id: string, generatedAt: string, contentDigest = '') =>
+  request<{ status: string }>(`/tasks/${id}/confirm`, 'POST', { generatedAt, contentDigest })
+
 export const deleteBidTask = (id: string) => request<{ id: string }>(`/tasks/${id}`, 'DELETE')
 
 export type CorpusSummary = {
@@ -339,18 +356,20 @@ export function generateBid(
   return request<BidTask>(`/tasks/${id}/generate`, 'POST', selection)
 }
 
-export function downloadBidFile(taskId: string, fileName: string) {
-  return apiDownload(`${BASE}/tasks/${taskId}/files/${encodeURIComponent(fileName)}`, {
+export function downloadBidFile(taskId: string, fileName: string, recordId?: string) {
+  const source = recordId ? `records/${recordId}` : `tasks/${taskId}`
+  return apiDownload(`${BASE}/${source}/files/${encodeURIComponent(fileName)}`, {
     token: getAccessToken(),
     fallbackName: fileName,
   })
 }
 
 /** 预览用：拿到 Word 文件的二进制，交给 docx-preview 渲染 */
-export async function fetchBidFileBlob(taskId: string, fileName: string): Promise<Blob> {
+export async function fetchBidFileBlob(taskId: string, fileName: string, recordId?: string): Promise<Blob> {
   const token = getAccessToken()
+  const source = recordId ? `records/${recordId}` : `tasks/${taskId}`
   const response = await fetch(
-    `${getApiBaseUrl()}${BASE}/tasks/${taskId}/files/${encodeURIComponent(fileName)}`,
+    `${getApiBaseUrl()}${BASE}/${source}/files/${encodeURIComponent(fileName)}`,
     { headers: token ? { Authorization: `Bearer ${token}`, 'X-Access-Token': token } : {} },
   )
   if (!response.ok) throw new Error('文件读取失败，请重新生成后再试')

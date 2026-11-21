@@ -85,6 +85,8 @@ export type TimeRange = (typeof TIME_RANGES)[number]['value']
 
 export type TenderTask = {
   id: string
+  source?: 'bidgen'
+  sourceTaskId?: string
   recordId: string
   projectName: string
   tenderer: string
@@ -128,6 +130,8 @@ export function recordToTask(item: TenderRecordItem): TenderTask {
   }
   return {
     id: item.id,
+    source: item.source,
+    sourceTaskId: item.sourceTaskId,
     recordId: item.id,
     projectName: item.projectName || '未命名项目',
     tenderer: item.tenderer || '—',
@@ -147,6 +151,12 @@ export function recordToTask(item: TenderRecordItem): TenderTask {
     approvalComment: item.lastComment || '',
     workflowLocked: Boolean(item.workflowLocked) || status !== 'processing',
   }
+}
+
+export function taskEditLocation(task: Pick<TenderTask, 'source' | 'sourceTaskId' | 'recordId'>) {
+  return task.source === 'bidgen' && task.sourceTaskId
+    ? { path: '/tenders', query: { id: task.sourceTaskId } }
+    : { path: '/tenders-classic', query: { record: task.recordId } }
 }
 
 export function formatBudget(yuan: number): string {

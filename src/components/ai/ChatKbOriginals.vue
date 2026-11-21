@@ -1,10 +1,15 @@
 <script setup lang="ts">
 import { computed, onUnmounted, ref, watch } from 'vue'
 import { ChevronLeft, ChevronRight, Download, FileText, Loader2, X } from 'lucide-vue-next'
+import { apiFetchBlob } from '@/lib/api'
+import { getAccessToken } from '@/lib/auth'
+import { companyLibraryFilePath, type CompanyOriginal } from '@/lib/tender-companies-api'
 import { fetchTenderLibraryFile, type SlotFileInfo } from '@/lib/tenders-api'
 
+type Original = SlotFileInfo & CompanyOriginal
+
 const props = defineProps<{
-  files: SlotFileInfo[]
+  files: Original[]
 }>()
 
 type Loaded = {
@@ -31,7 +36,7 @@ function revokeAll() {
   urls.length = 0
 }
 
-async function loadFiles(files: SlotFileInfo[]) {
+async function loadFiles(files: Original[]) {
   const seq = ++loadSeq
   pending.value = true
   openIndex.value = null
@@ -43,7 +48,9 @@ async function loadFiles(files: SlotFileInfo[]) {
     if (!id) continue
     const kind = f.kind === 'pdf' || f.kind === 'file' ? f.kind : 'image'
     try {
-      const blob = await fetchTenderLibraryFile(id)
+      const blob = f.baseId
+        ? await apiFetchBlob(companyLibraryFilePath(f.baseId, id), { token: getAccessToken() })
+        : await fetchTenderLibraryFile(id)
       if (seq !== loadSeq) return
       const url = URL.createObjectURL(blob)
       urls.push(url)
@@ -66,7 +73,7 @@ async function loadFiles(files: SlotFileInfo[]) {
 }
 
 watch(
-  () => props.files.map((f) => `${f.id}:${f.kind}:${f.name}`).join('|'),
+  () => props.files.map((f) => `${f.baseId}:${f.id}:${f.kind}:${f.name}`).join('|'),
   () => {
     void loadFiles(props.files)
   },

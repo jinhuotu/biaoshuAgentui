@@ -28,7 +28,7 @@ import {
   Film,
 } from 'lucide-vue-next'
 import { ApiError } from '@/lib/api'
-import weitaiLogo from '@/assets/weitai-logo.jpg'
+import youqiLogo from '@/assets/youqi-logo.jpg'
 import { ASSISTANT_NAME } from '@/config/brand'
 import {
   cancelChatSession,
@@ -41,6 +41,7 @@ import {
   summarizeChatSessionTitle,
   updateChatSession,
   type ChatMode,
+  type ChatKnowledgeMode,
   type ChatSessionItem,
   type ChatSessionMessage,
 } from '@/lib/ai-chat-api'
@@ -59,6 +60,7 @@ import ChatKbOriginals from '@/components/ai/ChatKbOriginals.vue'
 import ChatKbVideos from '@/components/ai/ChatKbVideos.vue'
 import LayoutFileDownloads from '@/components/ai/LayoutFileDownloads.vue'
 import type { SlotFileInfo } from '@/lib/tenders-api'
+import { isCompanyLibrary, type CompanyOriginal } from '@/lib/tender-companies-api'
 import {
   collectKbVideoHits,
   fmtKbVideoRange,
@@ -330,13 +332,13 @@ interface Msg {
   toolCalls?: ToolCallUi[]
 }
 
-function tenderOriginals(refs: RefChunk[] | undefined): SlotFileInfo[] {
+function tenderOriginals(refs: RefChunk[] | undefined): (SlotFileInfo & CompanyOriginal)[] {
   const seen = new Set<string>()
-  const out: SlotFileInfo[] = []
+  const out: (SlotFileInfo & CompanyOriginal)[] = []
   for (const r of refs || []) {
     const id = String(r.doc_id || '').trim()
     const kb = String(r.kb_id || r.kbId || '').trim()
-    if (!id || seen.has(id) || kb !== TENDER_LIB_ID) continue
+    if (!id || seen.has(id) || (kb !== TENDER_LIB_ID && !isCompanyLibrary(kb))) continue
     if (r.has_file === false) continue
     // 视频走阶段 5 播放器，不塞进投标原件缩略图条
     if (isKbVideoRef(r)) continue
@@ -345,6 +347,7 @@ function tenderOriginals(refs: RefChunk[] | undefined): SlotFileInfo[] {
     seen.add(id)
     out.push({
       id,
+      baseId: isCompanyLibrary(kb) ? kb : undefined,
       name: r.name || '资料原件',
       sizeBytes: 0,
       fileType: r.file_type,
@@ -538,6 +541,7 @@ function fmtAgo(ts: number) {
 const mode = ref<Mode>('fast')
 const kbList = ref<KnowledgeBaseItem[]>([])
 const selectedKbIds = ref<string[]>([])
+const knowledgeMode = ref<ChatKnowledgeMode>('auto')
 const kbPickerOpen = ref(false)
 const promptList = ref<PromptOption[]>([])
 const selectedPromptId = ref<string | null>(null)
@@ -573,6 +577,7 @@ const route = useRoute()
 const router = useRouter()
 
 const useKnowledge = computed(() => selectedKbIds.value.length > 0)
+const automaticKnowledge = computed(() => !activeAgent.value && knowledgeMode.value === 'auto')
 const selectedKbNames = computed(() =>
   kbList.value.filter((b) => selectedKbIds.value.includes(b.id)).map((b) => b.name),
 )
@@ -673,6 +678,7 @@ function clearAgentQuery() {
 
 function clearActiveAgent(opts?: { keepQuery?: boolean }) {
   activeAgent.value = null
+  setKnowledgeMode('auto')
   if (!opts?.keepQuery) clearAgentQuery()
   ensureDefaultPrompt()
 }
@@ -695,6 +701,7 @@ async function applyAgentById(agentId: string) {
     selectedWorkflowId.value = ''
     mode.value = agent.mode === 'deep' ? 'deep' : 'fast'
     selectedPromptId.value = agent.promptId || null
+    knowledgeMode.value = 'manual'
     selectedKbIds.value = [...(agent.knowledgeBaseIds || [])]
     messages.value = []
     pendingImages.value = []
@@ -721,11 +728,6 @@ onMounted(() => {
     await loadSessions()
     try {
       kbList.value = await listKnowledgeBases({ access: 'use' })
-      const allowed = new Set(kbList.value.map((b) => b.id))
-      selectedKbIds.value = selectedKbIds.value.filter((id) => allowed.has(id))
-      if (selectedKbIds.value.length === 0 && allowed.has('tenderlib01')) {
-        selectedKbIds.value = ['tenderlib01']
-      }
     } catch {
       // 未登录或接口失败时保持空列表
     }
@@ -785,10 +787,17 @@ onUnmounted(() => {
   if (toastTimer) clearTimeout(toastTimer)
 })
 
+function setKnowledgeMode(mode: 'auto' | 'off') {
+  knowledgeMode.value = mode
+  selectedKbIds.value = []
+  kbPickerOpen.value = false
+}
+
 function toggleKb(id: string) {
   selectedKbIds.value = selectedKbIds.value.includes(id)
     ? selectedKbIds.value.filter((x) => x !== id)
     : [...selectedKbIds.value, id]
+  knowledgeMode.value = selectedKbIds.value.length ? 'manual' : 'off'
 }
 
 async function openSession(sessionId: string) {
@@ -801,9 +810,11 @@ async function openSession(sessionId: string) {
     messages.value = restoredMsgs
     pendingImages.value = []
     const fromSession = (item.knowledgeBaseIds || []).filter(Boolean)
-    const fromMsgs = kbIdsFromMessages(item.messages || [])
-    const picked = fromSession.length > 0 ? fromSession : fromMsgs
+    const picked = fromSession.length || item.knowledgeMode
+      ? fromSession
+      : kbIdsFromMessages(item.messages || [])
     selectedKbIds.value = picked.filter((id) => kbList.value.some((b) => b.id === id))
+    knowledgeMode.value = item.knowledgeMode || (picked.length ? 'manual' : 'off')
   } catch (e) {
     toast.value = {
       type: 'err',
@@ -821,6 +832,7 @@ async function handleCreateSession() {
     activeSessionId.value = item.id
     messages.value = []
     pendingImages.value = []
+    if (!activeAgent.value) setKnowledgeMode('auto')
     ensureDefaultPrompt()
     toast.value = { type: 'ok', msg: '已新建会话' }
   } catch (e) {
@@ -989,7 +1001,7 @@ async function sendQuestion(text: string) {
     loading: true,
     mode: mode.value,
     thinking: !selectedWorkflowId.value && mode.value === 'deep',
-    useKnowledge: selectedWorkflowId.value ? false : useKnowledge.value,
+    useKnowledge: selectedWorkflowId.value ? false : automaticKnowledge.value ? undefined : useKnowledge.value,
     knowledgeBaseIds: [...selectedKbIds.value],
     knowledgeBaseNames: [...selectedKbNames.value],
     toolCalls: [],
@@ -999,6 +1011,7 @@ async function sendQuestion(text: string) {
   const controller = new AbortController()
   abortController = controller
   let accumulated = ''
+  let knowledgeNotice = false
   const toolCalls: ToolCallUi[] = []
 
   const patchAssistant = (patch: Partial<Msg>) => {
@@ -1182,6 +1195,7 @@ async function sendQuestion(text: string) {
           content: q,
           mode: mode.value,
           sessionId,
+          knowledgeMode: knowledgeMode.value,
           knowledgeBaseIds: selectedKbIds.value,
           promptId: selectedPromptId.value,
           agentId: activeAgent.value?.id || null,
@@ -1190,9 +1204,13 @@ async function sendQuestion(text: string) {
         },
         {
           onRefs: (chunks, meta) => {
+            knowledgeNotice = Boolean(meta?.knowledgeNotice)
+            const sourceIds = meta?.knowledgeBaseIds || selectedKbIds.value
             patchAssistant({
               refs: chunks as RefChunk[],
               refsReady: true,
+              knowledgeBaseIds: sourceIds,
+              knowledgeBaseNames: kbList.value.filter((b) => sourceIds.includes(b.id)).map((b) => b.name),
               ...(typeof meta?.useKnowledge === 'boolean'
                 ? { useKnowledge: meta.useKnowledge }
                 : {}),
@@ -1242,7 +1260,7 @@ async function sendQuestion(text: string) {
 
     patchAssistant({ loading: false, thinking: false })
 
-    if (accumulated.trim().length > 0 || (messages.value.find((m) => m.id === assistantId)?.images?.length)) {
+    if (!knowledgeNotice && (accumulated.trim().length > 0 || messages.value.find((m) => m.id === assistantId)?.images?.length)) {
       fetchRelatedQuestions({
         question: q || IMAGE_ONLY_CAPTION,
         answer: accumulated,
@@ -1461,29 +1479,45 @@ function resetCurrent() {
             :title="
               agentBound
                 ? '当前由场景智能体锁定知识库，清除智能体后可改'
-                : useKnowledge
-                  ? `已选 ${selectedKbNames.join('、')}，将仅在这些库中检索`
-                  : '未选知识库 = 不检索；点击选择一个或多个库'
+                : automaticKnowledge
+                  ? '根据问题和权限自动选择知识库'
+                  : useKnowledge
+                    ? `已选 ${selectedKbNames.join('、')}，将仅在这些库中检索`
+                    : '知识库检索已关闭'
             "
             :disabled="sending || agentBound"
             class="flex items-center gap-1.5 px-3 py-1.5 rounded text-[12px] border transition-colors disabled:opacity-40"
             :class="
-              useKnowledge
+              useKnowledge || automaticKnowledge
                 ? 'bg-patina/15 text-patina border-patina/40 font-medium'
                 : 'text-text-secondary border-hairline hover:text-text-primary bg-bg-base/60'
             "
             @click="kbPickerOpen = !kbPickerOpen"
           >
             <LibraryBig class="size-3.5" />
-            {{ useKnowledge ? `知识库 ${selectedKbIds.length}` : '选择知识库' }}
+            {{ automaticKnowledge ? '资料来源：自动' : useKnowledge ? `知识库 ${selectedKbIds.length}` : '知识库：关闭' }}
           </button>
           <div
             v-if="kbPickerOpen"
             class="absolute right-0 top-full z-30 mt-1.5 w-64 rounded-lg border border-hairline bg-bg-elevated shadow-xl p-2"
           >
-            <div class="px-1.5 pb-1.5 mb-1.5 border-b border-hairline text-[11px] text-text-muted">
-              未选 = 不检索；可多选。「投标资料库」含资质/合同 OCR 全文
+            <div class="pb-1.5 mb-1.5 border-b border-hairline">
+              <button
+                type="button"
+                :aria-pressed="automaticKnowledge"
+                class="w-full px-2 py-1.5 rounded-md text-left text-[12px] hover:bg-bg-base/60"
+                :class="{ 'text-patina font-medium': automaticKnowledge }"
+                @click="setKnowledgeMode('auto')"
+              >自动选择</button>
+              <button
+                type="button"
+                :aria-pressed="knowledgeMode === 'off'"
+                class="w-full px-2 py-1.5 rounded-md text-left text-[12px] hover:bg-bg-base/60"
+                :class="{ 'text-patina font-medium': knowledgeMode === 'off' }"
+                @click="setKnowledgeMode('off')"
+              >不查知识库</button>
             </div>
+            <div v-if="kbList.length" class="px-2 pb-1 text-[11px] text-text-muted">手动指定知识库（可多选）</div>
             <div
               v-if="kbList.length === 0"
               class="px-2 py-4 text-center text-[11px] text-text-muted"
@@ -1525,14 +1559,6 @@ function resetCurrent() {
                 </span>
               </button>
             </div>
-            <button
-              v-if="selectedKbIds.length > 0"
-              type="button"
-              class="mt-1.5 w-full h-7 rounded-md text-[11px] text-text-muted hover:text-text-primary hover:bg-bg-base/50"
-              @click="selectedKbIds = []"
-            >
-              清空选择（不检索）
-            </button>
           </div>
         </div>
 
@@ -1716,9 +1742,9 @@ function resetCurrent() {
             class="h-full flex flex-col items-center justify-center text-center py-10"
           >
             <div
-              class="size-14 rounded-full overflow-hidden mb-4 shadow-[0_0_28px_var(--accent-glow)] ring-1 ring-black/5"
+              class="size-14 shrink-0 rounded-lg overflow-hidden mb-4 shadow-[0_0_28px_var(--accent-glow)] ring-1 ring-black/5"
             >
-              <img :src="weitaiLogo" :alt="ASSISTANT_NAME" class="size-full object-cover" />
+              <img :src="youqiLogo" :alt="ASSISTANT_NAME" class="size-full object-cover" />
             </div>
             <div class="text-[15px] font-semibold mb-1">{{ ASSISTANT_NAME }}</div>
             <div class="text-[12px] text-text-secondary max-w-md mb-5 leading-relaxed">
@@ -1728,11 +1754,14 @@ function resetCurrent() {
               <template v-else>
                 未选提示词 = 不向大模型传系统提示词。
               </template>
-              <template v-if="useKnowledge">
-                已选知识库「{{ selectedKbNames.join('」「') }}」：将仅在这些库中检索片段辅助回答。
+              <template v-if="automaticKnowledge">
+                直接提问。需要内部资料时，助手会按你的权限选择来源。
+              </template>
+              <template v-else-if="useKnowledge">
+                将在「{{ selectedKbNames.join('」「') }}」中查找资料。
               </template>
               <template v-else>
-                未选知识库 = 不检索向量库。可在右上角选择提示词与知识库。
+                知识库检索已关闭。
               </template>
               左侧可管理会话；直接提问会自动创建新会话。
             </div>
@@ -1781,8 +1810,8 @@ function resetCurrent() {
 
             <!-- Assistant -->
             <div v-else class="flex gap-2.5">
-              <div class="size-8 shrink-0 overflow-hidden rounded-full ring-1 ring-black/5">
-                <img :src="weitaiLogo" alt="助手" class="size-full object-cover" />
+              <div class="size-8 shrink-0 overflow-hidden rounded-md ring-1 ring-black/5">
+                <img :src="youqiLogo" alt="助手" class="size-full object-cover" />
               </div>
               <div class="flex-1 max-w-[85%] space-y-3">
                 <div class="bg-bg-base/50 border border-hairline px-4 py-3 rounded-lg rounded-tl-sm">
@@ -2131,11 +2160,13 @@ function resetCurrent() {
                 {{ usePrompt ? `提示词：${selectedPromptName}` : '未选提示词' }}
               </span>
               ·
-              <span :class="useKnowledge ? 'text-patina' : 'text-text-muted'">
+              <span :class="useKnowledge || automaticKnowledge ? 'text-patina' : 'text-text-muted'">
                 {{
-                  useKnowledge
-                    ? `知识库：${selectedKbNames.join('、')}`
-                    : '未选知识库'
+                  automaticKnowledge
+                    ? '资料来源：自动'
+                    : useKnowledge
+                      ? `知识库：${selectedKbNames.join('、')}`
+                      : '知识库：关闭'
                 }}
               </span>
             </span>

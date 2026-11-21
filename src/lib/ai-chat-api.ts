@@ -2,6 +2,7 @@ import { apiRequest, getApiBaseUrl } from './api';
 import { getAccessToken } from './auth';
 
 export type ChatMode = 'fast' | 'deep';
+export type ChatKnowledgeMode = 'auto' | 'manual' | 'off';
 
 export type ChatSessionItem = {
   id: string;
@@ -11,6 +12,7 @@ export type ChatSessionItem = {
   summary?: string | null;
   /** 会话最近一次勾选的知识库，打开历史时用于恢复勾选 */
   knowledgeBaseIds?: string[];
+  knowledgeMode?: ChatKnowledgeMode;
   messageCount: number;
   lastMessageAt: number;
   createdAt: number;
@@ -152,7 +154,13 @@ export type ToolEventPayload = {
 };
 
 export type StreamHandlers = {
-  onRefs?: (chunks: unknown[], meta?: { agentId?: string; agentName?: string; useKnowledge?: boolean }) => void;
+  onRefs?: (chunks: unknown[], meta?: {
+    agentId?: string;
+    agentName?: string;
+    useKnowledge?: boolean;
+    knowledgeBaseIds?: string[];
+    knowledgeNotice?: boolean;
+  }) => void;
   onDelta?: (text: string) => void;
   onTool?: (payload: ToolEventPayload) => void;
   onDone?: (payload: {
@@ -172,6 +180,7 @@ export async function streamChat(
     sessionId: string;
     /** @deprecated 以 knowledgeBaseIds 为准；未选 = 不检索 */
     useKnowledge?: boolean;
+    knowledgeMode?: ChatKnowledgeMode;
     /** 选中的知识库 publicId；空数组 = 不检索 */
     knowledgeBaseIds?: string[];
     /** 选中的提示词 publicId；未传/空 = 不注入系统提示词基座 */
@@ -210,6 +219,7 @@ export async function streamChat(
       mode: input.mode,
       sessionId: input.sessionId,
       knowledgeBaseIds,
+      ...(input.knowledgeMode ? { knowledgeMode: input.knowledgeMode } : {}),
       useKnowledge: knowledgeBaseIds.length > 0,
       ...(promptId ? { promptId } : {}),
       ...(agentId ? { agentId } : {}),
@@ -267,6 +277,8 @@ export async function streamChat(
               agentId: payload.agentId,
               agentName: payload.agentName,
               useKnowledge: payload.useKnowledge,
+              knowledgeBaseIds: payload.knowledgeBaseIds,
+              knowledgeNotice: payload.knowledgeNotice,
             });
           } else if (event === 'delta') handlers.onDelta?.(String(payload.text ?? ''));
           else if (event === 'tool') handlers.onTool?.(payload as ToolEventPayload);

@@ -112,7 +112,7 @@ onUnmounted(() => {
       <div class="portal-hero__glow" aria-hidden="true" />
       <div class="portal-hero__body">
         <div class="min-w-0 flex-1">
-          <p class="portal-hero__eyebrow">河南伟泰光电 · 智能体交互系统</p>
+          <p class="portal-hero__eyebrow">河南优祺智能 · 智能体交互系统</p>
           <h1 class="portal-hero__title">工作台</h1>
           <p class="portal-hero__desc">
             上方为本人投标任务；常用业务从下方入口进入，管理与配置请点「更多」。

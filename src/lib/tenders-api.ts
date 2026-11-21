@@ -424,6 +424,16 @@ export type DocumentFormat = {
 }
 
 export type BidBrief = {
+  libraryBindings?: {
+    id: string
+    targetId: string
+    targetTitle: string
+    sourceItemId: string
+    sourceDocumentId: string
+    sourceHash: string
+  }[]
+  libraryBindingReview?: Record<string, unknown>[]
+  companyFieldSources?: Record<string, string>
   bidTableImportId?: string
   materialSelections?: import('./tender-materials-api').MaterialSelections
   projectName: string
@@ -445,6 +455,8 @@ export type BidBrief = {
   packageName: string
   packageNo: string
   bidderName: string
+  bidderCompanyId?: string
+  bidderCreditCode?: string
   bidderNature: string
   bidderAddress: string
   bidderWebsite: string
@@ -812,6 +824,9 @@ export type TenderApprovalLogItem = {
 }
 
 export type TenderRecordItem = {
+  source?: 'bidgen'
+  sourceTaskId?: string
+  versionConfirmed?: boolean
   materialCoverage?: MaterialCoverage
   materialIntentComplete?: boolean
   id: string
@@ -1156,6 +1171,21 @@ export async function deleteTenderLibraryFile(docId: string): Promise<SlotStatus
   })
 }
 
+function classicCompanyPath(companyId: string) {
+  return `/api/v1/tenders/materials/companies/${encodeURIComponent(companyId)}/classic`
+}
+
+export async function checkClassicCompanyMaterials(brief: BidBrief) {
+  return apiRequest<import('./tender-materials-api').MaterialCheck & {
+    attachmentMatch: AttachmentMatch
+    catalogSlots: SlotStatus[]
+    slots: SlotStatus[]
+    companyName: string
+  }>(`${classicCompanyPath(brief.bidderCompanyId || '')}/preflight`, {
+    method: 'POST', token: token(), body: brief,
+  })
+}
+
 export async function parseTenderInvitation(
   files: File[],
   options: {
@@ -1177,7 +1207,9 @@ export async function parseTenderInvitation(
   if (options.current) {
     form.append('current', JSON.stringify(options.current))
   }
-  return apiRequest<ParseInvitationResult>('/api/v1/tenders/parse-invitation', {
+  const companyId = options.current?.bidderCompanyId
+  const url = companyId ? `${classicCompanyPath(companyId)}/parse-invitation` : '/api/v1/tenders/parse-invitation'
+  return apiRequest<ParseInvitationResult>(url, {
     method: 'POST',
     token: token(),
     body: form,
@@ -1192,7 +1224,10 @@ export async function draftTenderTech(
   brief: BidBrief,
   options: { kbIds?: string[]; itemId?: string; promptId?: string; materialIds?: string[] } = {},
 ): Promise<{ brief: BidBrief; notes: string[] }> {
-  return apiRequest<{ brief: BidBrief; notes: string[] }>('/api/v1/tenders/tech/draft', {
+  const url = brief.bidderCompanyId
+    ? `${classicCompanyPath(brief.bidderCompanyId)}/tech/draft`
+    : '/api/v1/tenders/tech/draft'
+  return apiRequest<{ brief: BidBrief; notes: string[] }>(url, {
     method: 'POST',
     token: token(),
     body: {

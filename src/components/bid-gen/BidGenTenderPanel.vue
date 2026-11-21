@@ -41,17 +41,21 @@ const lotGroups = computed(() => {
   return [...groups.entries()]
 })
 const selectedCategories = computed(
-  () => new Set(tender.value.lots.filter((lot) => lotCodes.value.includes(lot.lotCode)).map((lot) => lot.category)),
+  () => new Set(tender.value.lots
+    .filter((lot) => lotCodes.value.includes(lot.lotCode))
+    .map((lot) => lot.scoringCategory || lot.category)),
 )
 const criteriaGroups = computed(() => {
   const groups: { title: string; applicable: boolean; items: TenderCriterion[]; maxScore: number }[] = []
   for (const criterion of tender.value.criteria) {
-    const title = criterion.volume === 'business' ? '商务评分标准' : `技术评分标准 · ${criterion.category}`
+    const title = criterion.volume === 'business' ? '商务评分标准'
+      : `技术评分标准${criterion.category ? ` · ${criterion.category}` : ''}`
     let group = groups.find((entry) => entry.title === title)
     if (!group) {
       const applicable =
         criterion.volume === 'business' ||
-        [...selectedCategories.value].some((category) => category === criterion.category)
+        !selectedCategories.value.size ||
+        selectedCategories.value.has(criterion.category)
       group = { title, applicable, items: [], maxScore: 0 }
       groups.push(group)
     }
@@ -184,6 +188,9 @@ function categoryChecked(category: string) {
 
     <!-- 评分标准 -->
     <div v-show="activeTab === 'criteria'" class="space-y-3">
+      <p v-for="(weights, category) in tender.scoringWeights" :key="category" class="text-[12px] text-muted-foreground">
+        {{ category }}权重（技术 / 商务 / 价格）{{ weights.technical }} : {{ weights.business }} : {{ weights.price }}
+      </p>
       <details v-for="group in criteriaGroups" :key="group.title" class="overflow-hidden rounded-lg border border-border bg-card" :open="group.applicable">
         <summary class="cursor-pointer bg-muted/50 px-3 py-1.5 text-[12px] font-medium">
           {{ group.title }} · {{ group.items.length }} 项 · 正向分值合计 {{ group.maxScore }}
@@ -203,7 +210,12 @@ function categoryChecked(category: string) {
               <td class="px-2 py-1.5 text-muted-foreground">{{ criterion.group }}</td>
               <td class="px-2 py-1.5 font-medium">{{ criterion.factor }}</td>
               <td class="px-2 py-1.5">{{ criterion.maxScore === null ? '—' : criterion.minScore === null ? `${criterion.maxScore}` : `${criterion.minScore} ~ ${criterion.maxScore}` }}</td>
-              <td class="whitespace-pre-line px-2 py-1.5 leading-relaxed">{{ criterion.rule }}</td>
+              <td class="whitespace-pre-line px-2 py-1.5 leading-relaxed">
+                {{ criterion.rule }}
+                <p v-if="criterion.sourcePath" class="mt-1 text-[11px] text-muted-foreground" :title="criterion.sourcePath">
+                  来源 {{ criterion.sourcePath.split('/').pop() }}
+                </p>
+              </td>
             </tr>
           </tbody>
         </table>
@@ -229,8 +241,10 @@ function categoryChecked(category: string) {
             <td class="px-2 py-1.5">{{ item.number }}</td>
             <td class="px-2 py-1.5" :style="{ paddingLeft: `${8 + (item.level - 1) * 16}px` }">{{ item.title }}</td>
             <td class="px-2 py-1.5">
-              <span v-if="item.volume === '价格文件'" class="text-muted-foreground">投标工具在线填报</span>
-              <span v-else-if="item.notApplicable" class="text-muted-foreground">标注不适用</span>
+              <span v-if="item.notApplicable" class="text-muted-foreground">标注不适用</span>
+              <span v-else-if="item.submissionMode === 'tool_generated'" class="text-muted-foreground">投标工具自动生成</span>
+              <span v-else-if="item.submissionMode === 'conditional_deviation'" class="text-muted-foreground">有偏差时提交</span>
+              <span v-else-if="item.volume === '价格文件'" class="text-muted-foreground">投标工具在线填报</span>
               <span v-else class="text-emerald-700">生成正文</span>
             </td>
             <td class="px-2 py-1.5 text-muted-foreground">{{ item.port }}</td>

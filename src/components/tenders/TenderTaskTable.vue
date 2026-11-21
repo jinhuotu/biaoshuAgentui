@@ -116,8 +116,20 @@ const pageButtons = computed(() => {
       {{ emptyText }}
     </div>
     <div v-else class="overflow-x-auto">
-      <table class="w-full text-xs min-w-[760px]">
-        <thead class="text-muted-foreground bg-background/40">
+      <table class="w-full min-w-[1360px] table-fixed text-xs">
+        <colgroup>
+          <col v-if="showCheckbox" class="w-10" />
+          <col class="w-14" />
+          <col class="w-64" />
+          <col />
+          <col class="w-28" />
+          <col class="w-40" />
+          <col class="w-28" />
+          <col v-if="showType" class="w-28" />
+          <col class="w-28" />
+          <col class="w-52" />
+        </colgroup>
+        <thead class="whitespace-nowrap text-muted-foreground bg-background/40">
           <tr class="border-b border-border">
             <th v-if="showCheckbox" class="text-left font-medium px-4 py-2.5 w-10">
               <input
@@ -151,15 +163,21 @@ const pageButtons = computed(() => {
             <td class="px-4 py-3 data-num text-muted-foreground">
               {{ (page - 1) * pageSize + idx + 1 }}
             </td>
-            <td class="px-4 py-3 font-medium max-w-[240px]">
+            <td class="px-4 py-3 font-medium">
               <div class="truncate" :title="row.projectName">{{ row.projectName }}</div>
             </td>
-            <td class="px-4 py-3 text-foreground/80">{{ row.tenderer }}</td>
-            <td class="px-4 py-3 data-num text-molybdenum">{{ formatBudget(row.budgetYuan) }}</td>
-            <td class="px-4 py-3 data-num text-muted-foreground">{{ row.deadline || '—' }}</td>
-            <td class="px-4 py-3">{{ row.owner || '—' }}</td>
-            <td v-if="showType" class="px-4 py-3 text-foreground/80">{{ row.projectType }}</td>
+            <td class="px-4 py-3 text-foreground/80">
+              <div class="line-clamp-2 break-words" :title="row.tenderer">{{ row.tenderer }}</div>
+            </td>
+            <td class="px-4 py-3 whitespace-nowrap data-num text-molybdenum">{{ formatBudget(row.budgetYuan) }}</td>
+            <td class="px-4 py-3 whitespace-nowrap data-num text-muted-foreground">{{ row.deadline || '—' }}</td>
             <td class="px-4 py-3">
+              <div class="truncate" :title="row.owner">{{ row.owner || '—' }}</div>
+            </td>
+            <td v-if="showType" class="px-4 py-3 text-foreground/80">
+              <div class="truncate" :title="row.projectType">{{ row.projectType }}</div>
+            </td>
+            <td class="px-4 py-3 whitespace-nowrap">
               <TenderStatusTag :status="row.status" />
             </td>
             <td class="px-4 py-3 whitespace-nowrap">

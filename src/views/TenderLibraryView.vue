@@ -5,9 +5,13 @@ import { ExternalLink, FileText, FolderOpen, Loader2, Pencil, Plus, Trash2, Uplo
 import { PageHeader, Panel, Tag } from '@/components/ui-kit'
 import AppAlertDialog from '@/components/ui/AppAlertDialog.vue'
 import TenderScanGallery from '@/components/tenders/TenderScanGallery.vue'
+import TenderCompanyPicker from '@/components/tenders/TenderCompanyPicker.vue'
 import MaterialArchivePanel from '@/components/tenders/MaterialArchivePanel.vue'
+import { canAccessPath } from '@/config/nav'
 import { ApiError } from '@/lib/api'
 import { getAccessToken } from '@/lib/auth'
+import { companyLibrary, listTenderCompanies, type CompanyDirectory, type TenderCompany } from '@/lib/tender-companies-api'
+import { useAuthStore } from '@/stores/auth'
 import {
   clearTenderSlot,
   createTenderLibraryItem,
@@ -25,17 +29,28 @@ import {
 } from '@/lib/tenders-api'
 
 const router = useRouter()
+const auth = useAuthStore()
 const loading = ref(true)
 const error = ref('')
 const hint = ref('')
 const baseId = ref('')
 const slots = ref<SlotStatus[]>([])
+const directory = ref<CompanyDirectory>({ items: [], canCreate: false, legacyAvailable: false })
+const selectedScope = ref('')
+const activeCompany = computed(() => directory.value.items.find(item => item.id === selectedScope.value))
+const companyApi = computed(() => activeCompany.value ? companyLibrary(activeCompany.value.id) : null)
+const legacy = computed(() => selectedScope.value === 'legacy')
+const scopeReady = computed(() => legacy.value || Boolean(activeCompany.value?.active))
+const canManage = computed(() => legacy.value || Boolean(activeCompany.value?.active && activeCompany.value.canManage))
+const canOpenKnowledge = computed(() => baseId.value &&
+  canAccessPath(`/knowledge/${baseId.value}`, auth.isAdmin, auth.menus))
 const uploadingKey = ref<string | null>(null)
 const savingFactsId = ref<string | null>(null)
 const reindexing = ref(false)
 const fileInput = ref<HTMLInputElement | null>(null)
 const pendingKey = ref<string | null>(null)
 const pendingReplace = ref(true)
+let pendingFileScope = ''
 
 const showEditor = ref(false)
 const editingKey = ref<string | null>(null)
@@ -46,6 +61,9 @@ const pendingDelete = ref<SlotStatus | null>(null)
 const pendingDeleteFile = ref<{ slot: SlotStatus; file: SlotFileInfo } | null>(null)
 const deleting = ref(false)
 const removingFileId = ref<string | null>(null)
+const scopeBusy = computed(() => loading.value || !!uploadingKey.value || reindexing.value ||
+  saving.value || !!savingFactsId.value || deleting.value || showEditor.value ||
+  !!pendingDelete.value || !!pendingDeleteFile.value)
 
 const CREDIT_SEARCH =
   'https://www.creditchina.gov.cn/xinyongxinxi/index.html?index=0&scenes=defaultScenario&tableName=credit_xyzx_tyshxydm&searchState=2&entityType=1,2,4,5,6,7,8&keyword='
@@ -68,7 +86,8 @@ function loadCreditName() {
 }
 
 function openCreditDialog() {
-  loadCreditName()
+  if (activeCompany.value) creditName.value = activeCompany.value.name
+  else loadCreditName()
   showCredit.value = true
 }
 
@@ -113,21 +132,50 @@ onMounted(async () => {
     loading.value = false
     return
   }
-  await reload()
+  try {
+    directory.value = await listTenderCompanies()
+    const scope = directory.value.items.find(item => item.active)?.id ||
+      (directory.value.legacyAvailable ? 'legacy' : '')
+    await switchScope(scope)
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : '加载公司列表失败'
+    loading.value = false
+  }
 })
 
+async function switchScope(id: string) {
+  selectedScope.value = id
+  pendingKey.value = null
+  error.value = ''
+  slots.value = []
+  baseId.value = ''
+  hint.value = ''
+  if (scopeReady.value) await reload()
+  else loading.value = false
+}
+
+async function onCompanySaved(company: TenderCompany) {
+  directory.value.items = [...directory.value.items.filter(item => item.id !== company.id), company]
+    .sort((left, right) => left.name.localeCompare(right.name, 'zh-CN'))
+  await switchScope(company.id)
+}
+
 async function reload(quiet = false) {
+  const scope = selectedScope.value
   if (!quiet) loading.value = true
   error.value = ''
   try {
-    const data = await fetchTenderLibrary()
+    const data = companyApi.value ? await companyApi.value.list() : await fetchTenderLibrary()
+    if (selectedScope.value !== scope) return
     slots.value = data.slots || []
     hint.value = data.hint || ''
     baseId.value = data.baseId || ''
   } catch (e) {
-    error.value = e instanceof ApiError || e instanceof Error ? e.message : '加载资料库失败'
+    if (selectedScope.value === scope) {
+      error.value = e instanceof Error ? e.message : '加载资料库失败'
+    }
   } finally {
-    loading.value = false
+    if (selectedScope.value === scope) loading.value = false
   }
 }
 
@@ -154,21 +202,22 @@ async function saveItem() {
   saving.value = true
   error.value = ''
   try {
+    const api = companyApi.value
+    const body = { title, hint: editorHint.value.trim() }
     if (editingKey.value) {
       const selected = slots.value.find((s) => s.key === editingKey.value)
       if (isVirtualSlot(selected || null)) {
-        await createTenderLibraryItem({ key: editingKey.value, title, hint: editorHint.value.trim() })
+        const input = { ...body, key: editingKey.value }
+        if (api) await api.create(input)
+        else await createTenderLibraryItem(input)
       } else {
-        await updateTenderLibraryItem(selected?.parentKey || editingKey.value, {
-          title,
-          hint: editorHint.value.trim(),
-        })
+        const key = selected?.parentKey || editingKey.value
+        if (api) await api.rename(key, body)
+        else await updateTenderLibraryItem(key, body)
       }
     } else {
-      await createTenderLibraryItem({
-        title,
-        hint: editorHint.value.trim(),
-      })
+      if (api) await api.create(body)
+      else await createTenderLibraryItem(body)
     }
     await reload(true)
     showEditor.value = false
@@ -192,10 +241,8 @@ async function saveFacts(payload: { id: string; role: string; fields: { name: st
   savingFactsId.value = payload.id
   error.value = ''
   try {
-    await updateLibraryFileFacts(payload.id, {
-      role: payload.role,
-      fields: payload.fields,
-    })
+    if (companyApi.value) await companyApi.value.saveFacts(payload.id, payload)
+    else await updateLibraryFileFacts(payload.id, { role: payload.role, fields: payload.fields })
     await reload(true)
   } catch (e) {
     error.value = e instanceof ApiError ? e.message : '保存识别结果失败'
@@ -229,8 +276,8 @@ async function confirmDeleteFile() {
   removingFileId.value = docId
   error.value = ''
   try {
-    const item = await deleteTenderLibraryFile(docId)
-    applySlotUpdate(row.slot.key, item)
+    if (companyApi.value) await companyApi.value.deleteFile(docId)
+    else applySlotUpdate(row.slot.key, await deleteTenderLibraryFile(docId))
     pendingDeleteFile.value = null
     await reload(true)
   } catch (e) {
@@ -248,7 +295,10 @@ async function confirmDeleteItem() {
   error.value = ''
   uploadingKey.value = slot.key
   try {
-    if (isVirtualSlot(slot)) {
+    if (companyApi.value) {
+      await companyApi.value.deleteItem(slot.key)
+      await reload(true)
+    } else if (isVirtualSlot(slot)) {
       await dismissTenderLibraryItem(slot.key)
       slots.value = slots.value.filter((s) => s.key !== slot.key)
     } else {
@@ -274,6 +324,7 @@ function pickFiles(slot: SlotStatus, replace: boolean) {
   if (!slot.key) return
   pendingKey.value = slot.key
   pendingReplace.value = replace
+  pendingFileScope = selectedScope.value
   fileInput.value?.click()
 }
 
@@ -284,10 +335,15 @@ async function onFileChange(ev: Event) {
   const replace = pendingReplace.value
   input.value = ''
   pendingKey.value = null
-  if (!files.length || !key) return
+  if (!files.length || !key || pendingFileScope !== selectedScope.value) return
   error.value = ''
   uploadingKey.value = key
   try {
+    if (companyApi.value) {
+      await companyApi.value.upload(key, files, replace)
+      await reload(true)
+      return
+    }
     let last: SlotStatus | null = null
     for (let i = 0; i < files.length; i++) {
       const selected = slots.value.find((s) => s.key === key)
@@ -325,6 +381,11 @@ async function onClear(slot: SlotStatus) {
   error.value = ''
   uploadingKey.value = slot.key
   try {
+    if (companyApi.value) {
+      await companyApi.value.clearFiles(slot.key)
+      await reload(true)
+      return
+    }
     const data = await clearTenderSlot(slot.parentKey || slot.key)
     const idx = slots.value.findIndex((s) => s.key === slot.key)
     if (idx >= 0) {
@@ -348,8 +409,8 @@ async function onReindex(force = false) {
   reindexing.value = true
   error.value = ''
   try {
-    const stats = await reindexTenderLibrary({ force })
-    hint.value = `已排队 OCR 入库 ${stats.queued} 个文件${stats.skipped ? `，跳过 ${stats.skipped}` : ''}。完成后可在「AI 智能问答」勾选「投标资料库」检索。`
+    const stats = companyApi.value ? await companyApi.value.reindex(force) : await reindexTenderLibrary({ force })
+    hint.value = `已排队 OCR 入库 ${stats.queued} 个文件${stats.skipped ? `，跳过 ${stats.skipped}` : ''}。完成后可在「AI 智能问答」选择当前资料库检索。`
   } catch (e) {
     error.value = e instanceof ApiError || e instanceof Error ? e.message : '入库排队失败'
   } finally {
@@ -361,12 +422,11 @@ async function onReindex(force = false) {
 <template>
   <PageHeader
     title="投标资料库"
-    description="资料存放在知识库中。上传后 OCR 入库，可在 AI 智能问答中检索；生成投标文件时按名称自动引用。"
+    description="按投标公司维护常备资料。上传后 OCR 入库，可在 AI 智能问答中选择对应资料库检索。"
   >
     <template #badges>
       <Tag tone="molybdenum">知识库融合</Tag>
       <Tag>OCR 可检索</Tag>
-      <Tag>生成时自动引用</Tag>
     </template>
     <template #actions>
       <button
@@ -379,6 +439,7 @@ async function onReindex(force = false) {
         打开信用中国
       </button>
       <button
+        v-if="canManage && !loading"
         type="button"
         class="h-8 px-3 inline-flex items-center gap-1.5 rounded-md border border-border text-[12px] hover:bg-accent disabled:opacity-50"
         :disabled="reindexing"
@@ -390,6 +451,7 @@ async function onReindex(force = false) {
         {{ reindexing ? '入库中…' : 'OCR 入库' }}
       </button>
       <button
+        v-if="canManage && !loading"
         type="button"
         class="h-8 px-3 inline-flex items-center gap-1.5 rounded-md border border-border text-[12px] hover:bg-accent"
         @click="openCreate"
@@ -398,7 +460,7 @@ async function onReindex(force = false) {
         新增资料
       </button>
       <button
-        v-if="baseId"
+        v-if="canOpenKnowledge"
         type="button"
         class="h-8 px-3 inline-flex items-center gap-1.5 rounded-md border border-border text-[12px] hover:bg-accent"
         @click="router.push(`/knowledge/${baseId}`)"
@@ -424,16 +486,22 @@ async function onReindex(force = false) {
     {{ error }}
   </p>
 
+  <div class="mb-5 max-w-4xl">
+    <TenderCompanyPicker :directory="directory" :model-value="selectedScope" :disabled="scopeBusy"
+      @update:model-value="switchScope" @saved="onCompanySaved" />
+  </div>
+
   <div v-if="loading" class="py-16 text-center text-[12px] text-muted-foreground">
     <Loader2 class="inline size-4 animate-spin mr-2" />加载资料库…
   </div>
 
-  <div v-else class="space-y-5 max-w-4xl">
-    <MaterialArchivePanel library-only />
-    <label class="block text-sm">本次上传资料所属投标人（请核对）
+  <div v-else-if="scopeReady && baseId" :key="selectedScope" class="space-y-5 max-w-4xl">
+    <MaterialArchivePanel v-if="legacy" library-only />
+    <label v-if="legacy" class="block text-sm">本次上传资料所属投标人（请核对）
       <input v-model="materialCompany" class="kb-input mt-2 w-full" placeholder="填写扫描件实际所属公司；不填写时需靠OCR或人工事实核验，不能自动用于组卷" />
     </label>
-    <Panel title="公司常备资料" :subtitle="hint || 'Word / Excel / PDF / 图片，可多选；替换会覆盖该项全部文件'">
+    <Panel :title="activeCompany ? `${activeCompany.name} · 常备资料` : '公司常备资料'"
+      :subtitle="hint || 'Word / Excel / PDF / 图片，可多选；替换会覆盖该项全部文件'">
       <p class="mb-4 text-[12px] text-muted-foreground">
         已维护
         <span class="text-foreground font-medium">{{ filledCount }}</span>
@@ -462,13 +530,13 @@ async function onReindex(force = false) {
                 {{ slot.hint }}
               </p>
               <p
-                v-if="slot.key === 'perf'"
+                v-if="legacy && slot.key === 'perf'"
                 class="mt-1 text-[11px] text-muted-foreground leading-relaxed"
               >
                 上传后会扫描合同/发票，抽出项目名称、规格型号、买方、联系人、合同额、概况和是否在建。按本次招标条款核对行业范围、金额、数量与履约状态。
               </p>
               <p
-                v-if="slot.key === 'id_legal'"
+                v-if="legacy && slot.key === 'id_legal'"
                 class="mt-1 text-[11px] text-muted-foreground leading-relaxed"
               >
                 可放多位法定代表人。每人上传正面和反面，正面识别姓名、性别、年龄和身份证号。同一人请先传正面再传反面。做标书时再选择本标用谁。
@@ -477,14 +545,14 @@ async function onReindex(force = false) {
                 v-if="slot.files?.length"
                 :files="slot.files"
                 :base-id="baseId"
-                removable
+                :removable="canManage"
                 :removing-id="removingFileId"
                 :saving-id="savingFactsId"
                 @remove="(file) => askDeleteFile(slot, file)"
                 @save-facts="saveFacts"
               />
             </div>
-            <div class="flex shrink-0 flex-wrap items-center gap-1.5">
+            <div v-if="canManage" class="flex shrink-0 flex-wrap items-center gap-1.5">
               <button
                 type="button"
                 class="h-7 px-2 inline-flex items-center gap-1 rounded-md border border-border text-[11px] hover:bg-accent disabled:opacity-50"
@@ -595,7 +663,7 @@ async function onReindex(force = false) {
   >
     <div class="w-full max-w-md rounded-xl border border-border bg-card p-4 shadow-xl">
       <h3 class="text-[14px] font-semibold">{{ editingKey ? '修改资料项' : '新增资料项' }}</h3>
-      <p class="mt-1 text-[11px] text-muted-foreground">名称会用于 Word 附件小标题，解析邀请书时也会对照这份清单。</p>
+      <p v-if="legacy" class="mt-1 text-[11px] text-muted-foreground">名称会用于 Word 附件小标题，解析邀请书时也会对照这份清单。</p>
       <label class="mt-4 block text-[12px]">
         资料名称
         <input v-model="editorTitle" class="kb-input mt-1" placeholder="例如：ISO 体系证书" />
@@ -624,7 +692,7 @@ async function onReindex(force = false) {
   <AppAlertDialog
     :open="Boolean(pendingDelete)"
     :title="isVirtualSlot(pendingDelete) ? '移除虚拟资料项' : '删除资料项'"
-    :description="isVirtualSlot(pendingDelete) ? `忽略「${pendingDelete?.title || ''}」？刷新或重新生成后将不再显示此空项。` : `确定删除「${pendingDelete?.title || ''}」及其扫描件？删除后生成投标文件时将不再引用该项。`"
+    :description="isVirtualSlot(pendingDelete) ? `从当前资料库忽略「${pendingDelete?.title || ''}」？` : `确定从当前资料库删除「${pendingDelete?.title || ''}」及其扫描件？`"
     :confirm-label="isVirtualSlot(pendingDelete) ? '确认忽略' : '确认删除'"
     :loading="deleting"
     destructive
